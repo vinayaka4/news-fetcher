@@ -1,0 +1,37 @@
+[
+  {
+    "key": "pib",
+    "publisher": "Press Information Bureau",
+    "url": "https://www.pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3",
+    "default_enabled": true,
+    "usage": "official-government-feed"
+  },
+  {
+    "key": "indian_express_india",
+    "publisher": "The Indian Express",
+    "url": "https://indianexpress.com/section/india/feed/",
+    "default_enabled": false,
+    "usage": "personal-non-commercial-only"
+  },
+  {
+    "key": "indian_express_upsc",
+    "publisher": "The Indian Express",
+    "url": "https://indianexpress.com/section/upsc-current-affairs/feed/",
+    "default_enabled": false,
+    "usage": "personal-non-commercial-only"
+  },
+  {
+    "key": "times_of_india_top",
+    "publisher": "Times of India",
+    "url": "https://timesofindia.indiatimes.com/rssfeedstopstories.cms",
+    "default_enabled": false,
+    "usage": "personal-non-commercial-only"
+  },
+  {
+    "key": "times_of_india_india",
+    "publisher": "Times of India",
+    "url": "https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms",
+    "default_enabled": false,
+    "usage": "personal-non-commercial-only"
+  }
+]

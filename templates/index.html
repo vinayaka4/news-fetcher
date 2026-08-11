@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Current Affairs Desk</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">INDIA NEWS MONITOR</p>
+        <h1>Current Affairs Desk</h1>
+        <p class="subtitle">A focused view of PIB and approved publisher feeds.</p>
+      </div>
+      <div class="count"><strong>{{ articles|length }}</strong><span>articles shown</span></div>
+    </header>
+
+    <form class="filters" method="get" aria-label="Article filters">
+      <label>Search<input name="q" value="{{ q }}" placeholder="Search headlines…"></label>
+      <label>Ministry
+        <select name="ministry">
+          <option value="">All ministries</option>
+          {% for item in ministries %}<option {{ 'selected' if item == ministry }}>{{ item }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Publisher
+        <select name="publisher">
+          <option value="">All publishers</option>
+          {% for item in publishers %}<option {{ 'selected' if item == publisher }}>{{ item }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Date order
+        <select name="order">
+          <option value="desc" {{ 'selected' if order == 'desc' }}>Newest first</option>
+          <option value="asc" {{ 'selected' if order == 'asc' }}>Oldest first</option>
+        </select>
+      </label>
+      <label>UPSC category
+        <select name="category"><option value="">All categories</option>
+          {% for item in categories %}<option {{ 'selected' if item == category }}>{{ item }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>GS paper
+        <select name="upsc"><option value="">All papers</option>
+          {% for item in upsc_values %}<option {{ 'selected' if item == upsc }}>{{ item }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="focus-toggle"><input type="checkbox" name="show_all" value="1" {{ 'checked' if show_all }}> Show all news</label>
+      <button type="submit">Apply filters</button>
+      <a class="clear" href="/">Clear</a>
+    </form>
+
+    <section class="list" aria-live="polite">
+      {% for article in articles %}
+      <article>
+        <div class="meta">
+          <span class="publisher">{{ article.publisher }}</span>
+          {% if article.ministry %}<span>{{ article.ministry }}</span>{% endif %}
+          {% if article.category %}<span>{{ article.category }}</span>{% endif %}
+          {% if article.upsc_relevance %}<span class="gs">{{ article.upsc_relevance }}</span>{% endif %}
+          <time>{{ article.published_at[:10] if article.published_at else 'Date unavailable' }}</time>
+        </div>
+        <h2>{{ article.title }}</h2>
+        {% if article.summary_points %}
+        <div class="digest-summary">
+          <h3>What you need to know</h3>
+          <ul>{% for point in article.summary_points %}<li>{{ point }}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
+        {% if article.details %}
+        <div class="upsc-notes">
+          <section><h3>Background</h3><p>{{ article.details.background }}</p></section>
+          <section><h3>Why it matters</h3><p>{{ article.details.why_it_matters }}</p></section>
+          <section><h3>Prelims facts</h3><ul>{% for fact in article.details.prelims_facts %}<li>{{ fact }}</li>{% endfor %}</ul></section>
+          <section><h3>Mains angle</h3><p>{{ article.details.mains_angle }}</p></section>
+        </div>
+        {% endif %}
+        {% if article.excerpt %}<p>{{ article.excerpt }}</p>{% endif %}
+        {% if article.full_text %}
+        <p class="pib-preview">{{ article.full_text[:700] }}{% if article.full_text|length > 700 %}…{% endif %}</p>
+        <details class="pib-content">
+          <summary>Read complete PIB release here</summary>
+          <div>{{ article.full_text }}</div>
+        </details>
+        {% endif %}
+        {% if article.publisher == 'Press Information Bureau' %}
+          {% if not article.full_text %}<p class="content-pending">Official release text is pending ingestion.</p>{% endif %}
+        {% elif article.sources %}
+        <div class="source-links">
+          {% for source in article.sources %}<a href="{{ source }}" target="_blank" rel="noopener">Source {{ loop.index }} ↗</a>{% endfor %}
+        </div>
+        {% else %}
+        <div class="source-links"><a href="{{ article.article_url }}" target="_blank" rel="noopener">Read original ↗</a></div>
+        {% endif %}
+      </article>
+      {% else %}
+      <div class="empty">
+        <span>NO RESULTS</span>
+        <h2>Your news desk is quiet.</h2>
+        <p>Run the fetcher to collect articles, or clear the current filters.</p>
+      </div>
+      {% endfor %}
+    </section>
+  </main>
+</body>
+</html>

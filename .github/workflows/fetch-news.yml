@@ -1,0 +1,32 @@
+name: Fetch daily news metadata
+
+on:
+  schedule:
+    # 16:30 UTC = 22:00 IST. GitHub schedules use UTC.
+    - cron: "30 16 * * *"
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python fetch_news.py
+        env:
+          NEWS_DATABASE: news.db
+          NEWS_ENABLED_SOURCES: pib
+          NEWS_USER_AGENT: ${{ secrets.NEWS_USER_AGENT }}
+      - name: Build UPSC digest with Perplexity
+        if: ${{ secrets.PERPLEXITY_API_KEY != '' }}
+        run: python perplexity_ingest.py
+        env:
+          NEWS_DATABASE: news.db
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          PERPLEXITY_MODEL: sonar
+      # SQLite on a hosted runner is ephemeral. Replace this step with an upload
+      # to your database/object store before using the workflow in production.

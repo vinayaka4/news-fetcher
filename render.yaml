@@ -1,0 +1,82 @@
+services:
+  - type: web
+    name: upsc-news-api
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 4 dashboard:app
+    healthCheckPath: /api/v1/healthz
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: upsc-news-postgres
+          property: connectionString
+      - key: PERPLEXITY_API_KEY
+        sync: false
+      - key: NEWS_ENABLED_SOURCES
+        value: pib,times_of_india_top,times_of_india_india
+      - key: PYTHON_VERSION
+        value: 3.12.7
+
+  - type: cron
+    name: upsc-news-daily-ingestion
+    runtime: python
+    region: singapore
+    schedule: "30 22 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python queue_worker.py --enqueue-daily --hydrate-missing-pib --drain
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: upsc-news-postgres
+          property: connectionString
+      - key: PERPLEXITY_API_KEY
+        sync: false
+      - key: NEWS_ENABLED_SOURCES
+        value: pib,times_of_india_top,times_of_india_india
+      - key: PYTHON_VERSION
+        value: 3.12.7
+
+  - type: cron
+    name: upsc-news-recovery
+    runtime: python
+    region: singapore
+    schedule: "*/15 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python queue_worker.py --hydrate-missing-pib --drain
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: upsc-news-postgres
+          property: connectionString
+      - key: PERPLEXITY_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.12.7
+
+  - type: cron
+    name: pib-reconciliation
+    runtime: python
+    region: singapore
+    schedule: "0 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python fetch_news.py --sources pib
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: upsc-news-postgres
+          property: connectionString
+      - key: NEWS_ENABLED_SOURCES
+        value: pib
+      - key: PYTHON_VERSION
+        value: 3.12.7
+
+databases:
+  - name: upsc-news-postgres
+    plan: basic-256mb
+    region: singapore
+    databaseName: upsc_news
+    user: upsc_news
+    postgresMajorVersion: "17"
+    ipAllowList: []
