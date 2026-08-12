@@ -1,32 +1,62 @@
-name: Fetch daily news metadata
+name: Daily news ingestion
 
 on:
   schedule:
-    # 16:30 UTC = 22:00 IST. GitHub schedules use UTC.
-    - cron: "30 16 * * *"
+    # GitHub schedules use UTC. 22:30 UTC = 04:00 IST the following day.
+    - cron: "30 22 * * *"
   workflow_dispatch:
+    inputs:
+      date:
+        description: "Optional IST publication date (YYYY-MM-DD)"
+        required: false
+        type: string
+
+concurrency:
+  group: production-news-ingestion
+  cancel-in-progress: false
 
 jobs:
-  fetch:
+  ingest:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+      PERPLEXITY_MODEL: sonar
+      NEWS_ENABLED_SOURCES: pib,times_of_india_top,times_of_india_india
+      NEWS_USER_AGENT: UPSCNewsFetcher/1.0
+      TARGET_DATE: ${{ inputs.date }}
+
     steps:
+      - name: Check required secrets
+        shell: bash
+        run: |
+          test -n "$DATABASE_URL" || { echo "Missing GitHub secret: DATABASE_URL"; exit 1; }
+          test -n "$PERPLEXITY_API_KEY" || { echo "Missing GitHub secret: PERPLEXITY_API_KEY"; exit 1; }
+
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
-      - run: python fetch_news.py
-        env:
-          NEWS_DATABASE: news.db
-          NEWS_ENABLED_SOURCES: pib
-          NEWS_USER_AGENT: ${{ secrets.NEWS_USER_AGENT }}
-      - name: Build UPSC digest with Perplexity
-        if: ${{ secrets.PERPLEXITY_API_KEY != '' }}
-        run: python perplexity_ingest.py
-        env:
-          NEWS_DATABASE: news.db
-          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
-          PERPLEXITY_MODEL: sonar
-      # SQLite on a hosted runner is ephemeral. Replace this step with an upload
-      # to your database/object store before using the workflow in production.
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch, hydrate, and store daily news
+        shell: bash
+        run: |
+          args=(--enqueue-daily --hydrate-missing-pib --drain)
+          if [ -n "$TARGET_DATE" ]; then
+            args+=(--date "$TARGET_DATE")
+          fi
+          python queue_worker.py "${args[@]}"
+
+      - name: Show pipeline status on failure
+        if: failure()
+        run: |
+          echo "The ingestion failed or retained retryable work. Review this run's logs."
+          echo "No data is discarded: jobs and missing PIB content remain in PostgreSQL for the next run."
