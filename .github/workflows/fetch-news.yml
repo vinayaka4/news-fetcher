@@ -2,8 +2,11 @@ name: Daily news ingestion
 
 on:
   schedule:
-    # GitHub schedules use UTC. 22:30 UTC = 04:00 IST the following day.
-    - cron: "30 22 * * *"
+    # GitHub cron is best-effort and can be delayed or occasionally dropped.
+    # Use off-peak minutes plus an idempotent fallback. Times are UTC:
+    # 22:17 UTC = 03:47 IST; 23:07 UTC = 04:37 IST (following IST day).
+    - cron: "17 22 * * *"
+    - cron: "7 23 * * *"
   workflow_dispatch:
     inputs:
       date:
