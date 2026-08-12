@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 import requests
@@ -89,3 +90,52 @@ def test_structural_failures_open_detail_circuit(monkeypatch):
         "SELECT circuit_breaker_state FROM pib_source_health").fetchone()[0] == "open"
     assert connection.execute(
         "SELECT COUNT(*) FROM pib_flags WHERE flag_type='CONTENT_SCHEMA_CHANGED'").fetchone()[0] == 1
+
+
+def test_date_anomaly_does_not_block_other_complete_dates():
+    connection = sqlite3.connect(":memory:"); initialize(connection)
+    now = datetime.now(timezone.utc).isoformat()
+    connection.execute("""INSERT INTO pib_source_health
+      (source_key,discovery_status,last_successful_discovery_at,listing_parse_healthy,updated_at)
+      VALUES ('pib','healthy',?,1,?)""", (now, now))
+    for date, count in (("2026-08-11", 1), ("2026-08-12", 1)):
+        connection.execute("""INSERT INTO articles
+          (id,publisher,source_key,title,normalized_title,article_url,published_at,full_text,fetched_at)
+          VALUES (?,?,?,?,?,?,?,?,?)""", (date,"PIB","pib",date,date,
+          f"https://www.pib.gov.in/PressReleasePage.aspx?PRID={date[-2:]}",date,"full text",now))
+    pib.record_flag(connection, "DISCOVERY_COUNT_ANOMALY", "warning", "unusual count", "2026-08-11")
+    pib.refresh_audits(connection, {"2026-08-11": 1, "2026-08-12": 1})
+    assert connection.execute("SELECT complete FROM pib_ingestion_runs WHERE publication_date='2026-08-11'").fetchone()[0] == 0
+    assert connection.execute("SELECT complete FROM pib_ingestion_runs WHERE publication_date='2026-08-12'").fetchone()[0] == 1
+
+
+def test_preserved_ready_release_above_current_listing_count_can_finalize():
+    connection = sqlite3.connect(":memory:"); initialize(connection)
+    now = datetime.now(timezone.utc).isoformat()
+    connection.execute("""INSERT INTO pib_source_health
+      (source_key,discovery_status,last_successful_discovery_at,listing_parse_healthy,updated_at)
+      VALUES ('pib','healthy',?,1,?)""", (now, now))
+    for number in range(2):
+        connection.execute("""INSERT INTO articles
+          (id,publisher,source_key,title,normalized_title,article_url,published_at,full_text,fetched_at)
+          VALUES (?,?,?,?,?,?,?,?,?)""", (str(number),"PIB","pib",str(number),str(number),
+          f"https://www.pib.gov.in/PressReleasePage.aspx?PRID={number}","2026-08-11","full text",now))
+    pib.refresh_audits(connection, {"2026-08-11": 1})
+    assert connection.execute("""SELECT expected_count,discovered_count,ready_count,complete
+      FROM pib_ingestion_runs""").fetchone() == (1, 2, 2, 1)
+
+
+def test_valid_listing_resolves_transient_dns_flag_even_with_count_warning(monkeypatch):
+    connection = sqlite3.connect(":memory:"); initialize(connection)
+    pib.record_flag(connection, "DNS_UNAVAILABLE", "critical", "old DNS failure")
+    html = """<ul class='num'><h3>Ministry</h3><li>
+      <a href='/PressReleasePage.aspx?PRID=501'>Release</a>
+      Posted on: 12 Aug 2026</li></ul>"""
+    monkeypatch.setattr(pib.requests, "get", lambda *a, **k: Response(html))
+    monkeypatch.setattr(pib, "count_anomalies", lambda *a, **k: ["2026-08-12"])
+    monkeypatch.setattr(pib, "fetch_content", lambda url: "complete official release text")
+    assert pib.fetch_releases(connection, source(), "agent") == 1
+    assert connection.execute("""SELECT COUNT(*) FROM pib_flags
+      WHERE flag_type='DNS_UNAVAILABLE' AND resolved_at IS NULL""").fetchone()[0] == 0
+    assert connection.execute(
+        "SELECT discovery_status FROM pib_source_health WHERE source_key='pib'").fetchone()[0] == "healthy"

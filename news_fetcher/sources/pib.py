@@ -283,11 +283,15 @@ def refresh_audits(connection: sqlite3.Connection, expected: dict[str, int]) -> 
           FROM articles WHERE source_key='pib' AND substr(published_at,1,10)=?""",
           (publication_date,)).fetchone()
         ready = ready or 0
+        # PIB can remove or re-date a PRID after we have archived it. Preserve
+        # that article, and treat the listing count as a minimum completeness
+        # requirement instead of making the date permanently impossible to
+        # finalize because the durable archive contains an extra ready row.
         missing = max(expected_count - ready, 0)
         active_flags = [row[0] for row in connection.execute("""SELECT flag_type FROM pib_flags
           WHERE resolved_at IS NULL AND (publication_date=? OR publication_date IS NULL)
           AND severity IN ('warning','critical') ORDER BY flag_type""", (publication_date,)).fetchall()]
-        complete = int(discovered == expected_count and ready == expected_count and missing == 0
+        complete = int(discovered >= expected_count and ready >= expected_count and missing == 0
                        and discovery_verified and parse_healthy and source_fresh and not active_flags)
         connection.execute("""INSERT INTO pib_ingestion_runs
           (publication_date,expected_count,discovered_count,ready_count,missing_count,
@@ -366,18 +370,24 @@ def fetch_releases(connection: sqlite3.Connection, source: Source, user_agent: s
     releases.sort(key=lambda item: item.get("published_at") or "", reverse=True)
     expected = Counter(str(item["published_at"] or "")[:10] for item in releases if item["published_at"])
     anomalies = count_anomalies(connection, dict(expected))
+    # A structurally valid HTTP 200 listing proves that transient transport and
+    # parse failures have recovered, even when a date-specific volume warning
+    # remains for operator review.
+    resolve_flag(connection, "DNS_UNAVAILABLE"); resolve_flag(connection, "LISTING_FETCH_FAILED")
+    resolve_flag(connection, "LISTING_EMPTY"); resolve_flag(connection, "LISTING_PARSE_ANOMALY")
     if anomalies:
         for publication_date in anomalies:
             record_flag(connection, "DISCOVERY_COUNT_ANOMALY", "warning",
                         "Discovery count deviates from the recent median", publication_date,
                         metadata={"count": expected[publication_date]})
-        update_discovery_health(connection, status="suspicious", http_status=listing_status,
+        update_discovery_health(connection, status="healthy", http_status=listing_status,
                                 parse_healthy=True, success=True)
     else:
         update_discovery_health(connection, status="healthy", http_status=listing_status,
                                 parse_healthy=True, success=True)
-        resolve_flag(connection, "DNS_UNAVAILABLE"); resolve_flag(connection, "LISTING_FETCH_FAILED")
-        resolve_flag(connection, "LISTING_EMPTY"); resolve_flag(connection, "LISTING_PARSE_ANOMALY")
+    for publication_date in expected:
+        if publication_date not in anomalies:
+            resolve_flag(connection, "DISCOVERY_COUNT_ANOMALY", publication_date)
     saved = 0
     for release in releases:
         title, url = str(release["title"]), canonical_url(str(release["url"]))
