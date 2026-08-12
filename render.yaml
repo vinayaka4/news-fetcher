@@ -5,7 +5,7 @@ services:
     plan: free
     region: singapore
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 4 dashboard:app
+    startCommand: python initialize_database.py && gunicorn --bind 0.0.0.0:$PORT --workers 2 --threads 4 dashboard:app
     healthCheckPath: /api/v1/healthz
     envVars:
       - key: DATABASE_URL

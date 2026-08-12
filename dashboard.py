@@ -38,7 +38,6 @@ def index():
             categories=[], upsc_values=[], order=order, show_all=show_all, **filters)
 
     with get_connection() as connection:
-        initialize(connection)
         conditions, values = [], []
         if filters["ministry"]:
             conditions.append("ministry = ?"); values.append(filters["ministry"])

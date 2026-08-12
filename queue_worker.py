@@ -70,6 +70,10 @@ def drain(database: Path, maximum: int) -> tuple[int, int]:
                 complete(connection, job["id"]); succeeded += 1
                 print(f"complete {job['job_type']} {job['job_key']}", flush=True)
             except Exception as error:
+                # PostgreSQL rejects every command after a statement error until
+                # the transaction is rolled back. Roll back partial source work
+                # before recording the durable retry state.
+                connection.rollback()
                 fail(connection, job["id"], f"{type(error).__name__}: {error}"); failed_count += 1
                 print(f"retry {job['job_type']} {job['job_key']}: {error}", flush=True)
     return succeeded, failed_count

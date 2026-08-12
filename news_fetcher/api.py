@@ -7,7 +7,6 @@ from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
 
-from news_fetcher.database import initialize
 from news_fetcher.db import connect as db_connect
 from news_fetcher.sources.pdf_reader import MAX_UPLOAD_BYTES, PdfIngestionError, ingest_upload
 
@@ -33,9 +32,9 @@ def configured_database() -> str:
 
 
 def connect():
-    connection = db_connect(configured_database())
-    initialize(connection)
-    return connection
+    # Schema initialization belongs to deployment/worker startup, not the HTTP
+    # request path. Running DDL for every request can deadlock active ingestion.
+    return db_connect(configured_database())
 
 
 def parse_iso_date(value: str | None) -> str:

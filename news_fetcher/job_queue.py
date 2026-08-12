@@ -38,7 +38,6 @@ def initialize_jobs(connection: sqlite3.Connection) -> None:
 
 def enqueue(connection: sqlite3.Connection, *, job_key: str, job_type: str,
             source_key: str, payload: dict[str, Any], max_attempts: int = 20) -> str:
-    initialize_jobs(connection)
     timestamp = now()
     job_id = str(uuid.uuid4())
     connection.execute("""INSERT INTO ingestion_jobs
@@ -59,7 +58,6 @@ def enqueue(connection: sqlite3.Connection, *, job_key: str, job_type: str,
 
 
 def claim_next(connection: sqlite3.Connection) -> sqlite3.Row | None:
-    initialize_jobs(connection)
     connection.row_factory = sqlite3.Row
     timestamp = now()
     # Recover work abandoned by a terminated worker after 15 minutes.

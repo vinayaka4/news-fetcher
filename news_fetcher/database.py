@@ -7,6 +7,11 @@ from news_fetcher.raw_store import initialize_raw_store
 
 
 def initialize(connection: sqlite3.Connection) -> None:
+    # PostgreSQL DDL takes relation locks. Serialize schema initialization so a
+    # deploy/migration cannot deadlock an ingestion worker starting at the same
+    # time. This transaction-scoped lock is automatically released on commit.
+    if backend(connection) == "postgres":
+        connection.execute("SELECT pg_advisory_xact_lock(731946201)")
     connection.executescript("""
         CREATE TABLE IF NOT EXISTS articles (
             id TEXT PRIMARY KEY, publisher TEXT NOT NULL, source_key TEXT NOT NULL,

@@ -4,6 +4,7 @@ import sqlite3
 from pypdf import PdfWriter
 
 import dashboard
+from news_fetcher.database import initialize
 from news_fetcher.raw_store import build_envelope, initialize_raw_store, store_raw_event
 
 
@@ -28,6 +29,7 @@ def test_raw_event_and_date_api(tmp_path):
 
 def test_pdf_upload_creates_document_and_raw_event(tmp_path):
     database = tmp_path / "uploads.db"
+    connection = sqlite3.connect(database); initialize(connection); connection.close()
     upload_directory = tmp_path / "uploads"
     dashboard.app.config.update(NEWS_DATABASE=str(database), UPLOAD_DIRECTORY=str(upload_directory))
     stream = io.BytesIO()
@@ -45,4 +47,3 @@ def test_pdf_upload_creates_document_and_raw_event(tmp_path):
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(1) FROM uploaded_documents").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(1) FROM raw_events WHERE source_key='manual_pdf'").fetchone()[0] == 1
-

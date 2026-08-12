@@ -82,7 +82,6 @@ def build_envelope(*, source_type: str, source_key: str, publisher: str,
 
 
 def store_raw_event(connection: sqlite3.Connection, envelope: dict[str, Any]) -> tuple[str, bool]:
-    initialize_raw_store(connection)
     serialized_payload = json.dumps(envelope["payload"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     content_hash = hashlib.sha256(serialized_payload.encode("utf-8")).hexdigest()
     source = envelope["source"]

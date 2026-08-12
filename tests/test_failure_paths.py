@@ -11,6 +11,7 @@ from pypdf import PdfWriter
 import dashboard
 import perplexity_ingest
 import scheduled_run
+import queue_worker
 from news_fetcher.cli import Source, fetch_pib_releases, fetch_source, initialize
 from news_fetcher.raw_store import build_envelope, initialize_raw_store, store_raw_event
 from news_fetcher.job_queue import claim_next, complete, enqueue, fail, initialize_jobs
@@ -198,6 +199,7 @@ def make_pdf() -> bytes:
 
 def test_pdf_rejects_corrupt_file_and_duplicate(tmp_path):
     database = tmp_path / "pdf.db"
+    connection = sqlite3.connect(database); initialize(connection); connection.close()
     dashboard.app.config.update(NEWS_DATABASE=str(database), UPLOAD_DIRECTORY=str(tmp_path / "uploads"))
     client = dashboard.app.test_client()
     bad = client.post("/api/v1/uploads/pdf",
@@ -384,3 +386,27 @@ def test_failed_job_is_persisted_for_retry():
         "SELECT status,attempts,last_error,next_attempt_at FROM ingestion_jobs").fetchone()
     assert status == "retry" and attempts == 1
     assert error == "temporary upstream outage" and next_attempt
+
+
+def test_worker_rolls_back_source_transaction_before_recording_retry(tmp_path, monkeypatch):
+    database = tmp_path / "worker-rollback.db"
+    with sqlite3.connect(database) as connection:
+        initialize(connection)
+        enqueue(connection, job_key="source:test:2026-08-12", job_type="fetch_source",
+                source_key="test", payload={})
+        connection.commit()
+
+    def partially_write_then_fail(connection, job):
+        connection.execute("""INSERT INTO articles
+          (id,publisher,source_key,title,normalized_title,article_url,fetched_at)
+          VALUES ('partial','Test','test','Partial','partial','https://example.com/partial','now')""")
+        raise RuntimeError("source failed")
+
+    monkeypatch.setattr(queue_worker, "execute", partially_write_then_fail)
+    assert queue_worker.drain(database, 1) == (0, 1)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM articles WHERE id='partial'").fetchone()[0] == 0
+        status, error = connection.execute(
+            "SELECT status,last_error FROM ingestion_jobs WHERE job_key='source:test:2026-08-12'").fetchone()
+    assert status == "retry"
+    assert "source failed" in error
