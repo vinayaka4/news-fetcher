@@ -24,6 +24,7 @@ def api_index():
         "pib_health": "/api/v1/pib/health",
         "articles": "/api/v1/articles?date=YYYY-MM-DD&source=pib&content_status=ready",
         "raw_events": "/api/v1/news?date=YYYY-MM-DD",
+        "pdf_newspapers": "/api/v1/uploads/pdf?date=YYYY-MM-DD",
         "health_check": "/api/v1/healthz"}})
 
 
@@ -328,12 +329,51 @@ def upload_pdf():
         return jsonify({"error": "date must be YYYY-MM-DD"}), 400
     upload_root = Path(current_app.config["UPLOAD_DIRECTORY"])
     source_name = request.form.get("source", "Manual PDF upload").strip() or "Manual PDF upload"
+    edition = request.form.get("edition", "").strip() or None
     try:
         with connect() as connection:
             result = ingest_upload(connection, upload_root, data=data, filename=upload.filename,
-                                   document_date=document_date, source_name=source_name)
+                                   document_date=document_date, source_name=source_name,
+                                   edition=edition)
     except PdfIngestionError as error:
         return jsonify({"error": str(error)}), 400
     if result.pop("duplicate"):
         return jsonify({"error": "PDF already uploaded", **result}), 409
     return jsonify(result), 201
+
+
+@api.get("/uploads/pdf")
+def list_pdf_uploads():
+    requested_date = request.args.get("date")
+    try:
+        document_date = parse_iso_date(requested_date) if requested_date else None
+    except ValueError:
+        return jsonify({"error": "date must be YYYY-MM-DD"}), 400
+    conditions, values = [], []
+    if document_date:
+        conditions.append("document_date=?"); values.append(document_date)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    with connect() as connection:
+        rows = connection.execute(f"""SELECT id,original_filename,page_count,document_date,
+          source_name,uploaded_at FROM uploaded_documents {where}
+          ORDER BY document_date DESC,uploaded_at DESC LIMIT 500""", values).fetchall()
+    items = [dict(row) | {"structured_url": f"/api/v1/uploads/pdf/{row['id']}"} for row in rows]
+    return jsonify({"date": document_date, "count": len(items), "items": items})
+
+
+@api.get("/uploads/pdf/<document_id>")
+def get_pdf_upload(document_id: str):
+    with connect() as connection:
+        row = connection.execute("""SELECT d.id,d.original_filename,d.document_date,
+          d.source_name,d.page_count,d.uploaded_at,r.raw_json
+          FROM uploaded_documents d JOIN raw_events r ON r.id=d.raw_event_id
+          WHERE d.id=?""", (document_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "PDF document not found"}), 404
+    envelope = json.loads(row["raw_json"])
+    newspaper = envelope.get("payload", {}).get("newspaper")
+    if not newspaper:
+        return jsonify({"error": "This legacy PDF has no structured newspaper projection",
+                        "document_id": document_id}), 409
+    return jsonify({"document_id": row["id"], "original_filename": row["original_filename"],
+                    "uploaded_at": row["uploaded_at"], "newspaper": newspaper})

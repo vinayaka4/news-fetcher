@@ -68,6 +68,21 @@ curl.exe -X POST http://127.0.0.1:5000/api/v1/uploads/pdf `
   -F "source=The Hindu e-paper"
 ```
 
+PDF uploads are extracted block-by-block with PyMuPDF and stored as a versioned
+hierarchy: newspaper issue -> section -> article -> paragraphs. Original
+page/block coordinates remain in `source_blocks` for traceability. Retrieve the
+structured projection with:
+
+```text
+GET /api/v1/uploads/pdf?date=2026-08-13
+GET /api/v1/uploads/pdf/{document_id}
+```
+
+Add `-F "edition=Final Home"` when the edition is known. Digital-text PDFs are
+processed immediately. Image-only or scanned PDFs return `ocr_required: true`;
+OCR and AI section classification remain explicit later stages so uncertain
+text is not silently invented or assigned to the wrong article.
+
 PDFs are limited to 25 MB. The original file is stored under `uploads/YYYY/MM`,
 while extracted page text and metadata are stored as a raw JSON event. Image-only
 PDFs produce empty text unless an OCR adapter is added later.
@@ -114,4 +129,3 @@ Top-level scripts such as `fetch_news.py` and `perplexity_ingest.py` remain
 stable compatibility entry points. New source-specific behavior belongs in its
 corresponding `news_fetcher/sources/` module rather than in the CLI, API, or
 queue worker.
-
