@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Current Affairs Desk</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='pdfs.css') }}">
 </head>
 <body>
   <main>
@@ -16,6 +17,8 @@
       </div>
       <div class="count"><strong>{{ articles|length }}</strong><span>articles shown</span></div>
     </header>
+
+    <nav class="desk-nav"><a href="/">News</a><a href="/pdfs">PDF newspapers</a><a href="/api/v1">API</a></nav>
 
     <form class="filters" method="get" aria-label="Article filters">
       <label>Search<input name="q" value="{{ q }}" placeholder="Search headlines…"></label>

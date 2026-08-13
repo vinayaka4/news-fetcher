@@ -1,0 +1,7 @@
+.desk-nav { display: flex; gap: .75rem; margin: 0 0 1.25rem; }
+.desk-nav a { color: #17324d; background: #edf3f7; border-radius: 999px; padding: .55rem .9rem; text-decoration: none; font-weight: 700; }
+.pdf-filters { position: static; grid-template-columns: 2fr 1fr 1fr 1fr auto; }
+.pdf-filter-date { position: static; margin-top: 12px; grid-template-columns: 1fr auto auto; }
+.document-status { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+.document-status span { border: 1px solid var(--line); padding: 5px 8px; }
+@media (max-width: 850px) { .pdf-filters, .pdf-filter-date { grid-template-columns: 1fr; } }

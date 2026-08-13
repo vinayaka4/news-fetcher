@@ -34,6 +34,7 @@ def test_structured_pdf_can_be_retrieved_by_document_id(tmp_path):
     database = tmp_path / "pdf-structured.db"
     with sqlite3.connect(database) as connection:
         initialize(connection)
+    dashboard.DATABASE = database
     dashboard.app.config.update(NEWS_DATABASE=str(database), DATABASE_URL=None,
                                 UPLOAD_DIRECTORY=str(tmp_path / "uploads"))
     stream = io.BytesIO(); writer = PdfWriter(); writer.add_blank_page(width=612, height=792)
@@ -50,3 +51,6 @@ def test_structured_pdf_can_be_retrieved_by_document_id(tmp_path):
     assert payload["newspaper"]["edition"] == "Final Home"
     listing = client.get("/api/v1/uploads/pdf?date=2026-08-13").get_json()
     assert listing["count"] == 1 and listing["items"][0]["id"] == uploaded["document_id"]
+    dashboard_page = client.get("/pdfs?date=2026-08-13")
+    assert dashboard_page.status_code == 200
+    assert b"daily.pdf" in dashboard_page.data and b"View structured JSON" in dashboard_page.data

@@ -108,5 +108,29 @@ def index():
         order=order, show_all=show_all, **filters)
 
 
+@app.get("/pdfs")
+def pdf_dashboard():
+    selected_date = request.args.get("date", "").strip()
+    where, values = ("WHERE d.document_date=?", [selected_date]) if selected_date else ("", [])
+    with get_connection() as connection:
+        rows = connection.execute(f"""SELECT d.id,d.original_filename,d.document_date,
+          d.source_name,d.page_count,d.uploaded_at,r.raw_json
+          FROM uploaded_documents d JOIN raw_events r ON r.id=d.raw_event_id
+          {where} ORDER BY d.document_date DESC,d.uploaded_at DESC LIMIT 200""", values).fetchall()
+    documents = []
+    for row in rows:
+        envelope = json.loads(row["raw_json"])
+        newspaper = envelope.get("payload", {}).get("newspaper") or {}
+        extraction, sections = newspaper.get("extraction", {}), newspaper.get("sections", [])
+        item = dict(row); item.pop("raw_json")
+        documents.append(item | {"edition": newspaper.get("edition"),
+          "schema_version": newspaper.get("schema_version"), "engine": extraction.get("engine"),
+          "classification_status": extraction.get("classification_status"),
+          "ocr_required": extraction.get("ocr_required"),
+          "text_characters": extraction.get("text_characters"), "section_count": len(sections),
+          "article_count": sum(len(section.get("articles", [])) for section in sections)})
+    return render_template("pdfs.html", documents=documents, selected_date=selected_date)
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

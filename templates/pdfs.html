@@ -1,0 +1,19 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDF Newspaper Desk</title><link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}"><link rel="stylesheet" href="{{ url_for('static', filename='pdfs.css') }}"></head><body><main>
+<header><div><p class="eyebrow">DOCUMENT INGESTION</p><h1>PDF Newspaper Desk</h1><p class="subtitle">Layout extraction, structured JSON, and quality status.</p></div>
+<div class="count"><strong>{{ documents|length }}</strong><span>issues shown</span></div></header>
+<nav class="desk-nav"><a href="/">News</a><a href="/pdfs">PDF newspapers</a><a href="/api/v1">API</a></nav>
+<form class="filters pdf-filters" action="/api/v1/uploads/pdf" method="post" enctype="multipart/form-data">
+<label>Newspaper PDF<input type="file" name="file" accept="application/pdf" required></label><label>Publication date<input type="date" name="date" required></label>
+<label>Newspaper<input name="source" placeholder="The Hindu" required></label><label>Edition<input name="edition" placeholder="International"></label>
+<button type="submit">Upload and structure</button></form>
+<form class="filters pdf-filter-date" method="get"><label>Filter date<input type="date" name="date" value="{{ selected_date }}"></label>
+<button type="submit">Filter issues</button><a class="clear" href="/pdfs">Clear</a></form>
+<section class="list">{% for document in documents %}<article><div class="meta"><span class="publisher">{{ document.source_name }}</span><time>{{ document.document_date }}</time>
+{% if document.edition %}<span>{{ document.edition }}</span>{% endif %}</div><h2>{{ document.original_filename }}</h2>
+<p>{{ document.page_count }} pages · {{ document.text_characters or 0 }} characters · {{ document.section_count }} sections · {{ document.article_count }} candidate articles</p>
+<div class="document-status"><span>Schema {{ document.schema_version or 'legacy' }}</span><span>{{ document.engine or 'legacy extractor' }}</span>
+<span>{{ document.classification_status or 'not classified' }}</span><span>{{ 'OCR required' if document.ocr_required else 'Digital text' }}</span></div>
+<div class="source-links"><a href="/api/v1/uploads/pdf/{{ document.id }}" target="_blank">View structured JSON ↗</a></div></article>
+{% else %}<div class="empty"><span>NO PDF ISSUES</span><h2>Upload a newspaper to inspect its JSON.</h2></div>{% endfor %}</section>
+</main></body></html>
