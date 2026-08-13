@@ -6,6 +6,7 @@
 <form class="filters pdf-filters" action="/api/v1/uploads/pdf" method="post" enctype="multipart/form-data">
 <label>Newspaper PDF<input type="file" name="file" accept="application/pdf" required></label><label>Publication date<input type="date" name="date" required></label>
 <label>Newspaper<input name="source" placeholder="The Hindu" required></label><label>Edition<input name="edition" placeholder="International"></label>
+<input type="hidden" name="reprocess" value="true">
 <button type="submit">Upload and structure</button></form>
 <form class="filters pdf-filter-date" method="get"><label>Filter date<input type="date" name="date" value="{{ selected_date }}"></label>
 <button type="submit">Filter issues</button><a class="clear" href="/pdfs">Clear</a></form>

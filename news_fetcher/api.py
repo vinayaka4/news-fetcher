@@ -330,11 +330,12 @@ def upload_pdf():
     upload_root = Path(current_app.config["UPLOAD_DIRECTORY"])
     source_name = request.form.get("source", "Manual PDF upload").strip() or "Manual PDF upload"
     edition = request.form.get("edition", "").strip() or None
+    reprocess = request.form.get("reprocess", "").strip().lower() in {"1", "true", "yes"}
     try:
         with connect() as connection:
             result = ingest_upload(connection, upload_root, data=data, filename=upload.filename,
                                    document_date=document_date, source_name=source_name,
-                                   edition=edition)
+                                   edition=edition, reprocess=reprocess)
     except PdfIngestionError as error:
         return jsonify({"error": str(error)}), 400
     if result.pop("duplicate"):
