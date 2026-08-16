@@ -24,6 +24,10 @@ class Response:
         self.text = text or content.decode("utf-8", errors="ignore")
         self.status = status
 
+    @property
+    def status_code(self):
+        return self.status
+
     def raise_for_status(self):
         if self.status >= 400:
             raise requests.HTTPError(f"HTTP {self.status}")
@@ -79,6 +83,18 @@ def test_same_story_from_different_publishers_is_preserved_for_later_consolidati
     assert fetch_source(connection, Source("times_of_india_india", "Times of India",
                                            "https://toi/feed"), "agent") == 1
     assert connection.execute("SELECT COUNT(*) FROM articles").fetchone()[0] == 2
+
+
+def test_rss_retries_403_with_browser_headers(monkeypatch):
+    responses = iter([Response(status=403), Response(RSS_XML)])
+    calls = []
+    def get(*args, **kwargs):
+        calls.append(kwargs.get("headers", {})); return next(responses)
+    monkeypatch.setattr("news_fetcher.sources.rss.requests.get", get)
+    connection = sqlite3.connect(":memory:"); initialize(connection)
+    assert fetch_source(connection, Source("indian_express_india", "Indian Express",
+                                           "https://indianexpress.com/feed"), "agent") == 1
+    assert len(calls) == 2 and "Mozilla" in calls[1]["User-Agent"]
 
 
 def test_rss_network_failure_writes_no_partial_rows(monkeypatch):

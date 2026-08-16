@@ -150,6 +150,22 @@ def _query_pdfs(connection, event_date: str, limit: int, include_content: bool) 
             "complete": None, "coverage": "manual_uploads", "items": items}
 
 
+def _compact_all_sources(sources: dict) -> None:
+    """Bound the AI-transfer payload without modifying durable source records."""
+    for item in sources["pib"]["items"]:
+        item["full_text"] = (item.get("full_text") or "")[:2000] or None
+    for item in sources["rss"]["items"]:
+        for field in ("full_text", "excerpt", "content_text"):
+            item[field] = (item.get(field) or "")[:2000] or None
+    for document in sources["pdf"]["items"]:
+        newspaper = document.get("newspaper") or {}
+        for section in newspaper.get("sections", []):
+            for article in section.get("articles", []):
+                content = article.get("content") or []
+                article["content"] = [_text for _text in [" ".join(content)[:2000]] if _text]
+                article.pop("source_blocks", None)
+
+
 @api.get("/articles")
 def get_articles():
     """Return normalized, consumer-ready articles including hydrated content."""
@@ -281,6 +297,7 @@ def get_all_sources():
         return jsonify({"error": "date must be YYYY-MM-DD and limit must be an integer"}), 400
     include_pdf_content = request.args.get("include_pdf_content", "false").strip().lower() in {
         "1", "true", "yes"}
+    compact = request.args.get("compact", "false").strip().lower() in {"1", "true", "yes"}
     with connect() as connection:
         sources = {
             "pib": _query_pib(connection, event_date, limit),
@@ -288,6 +305,8 @@ def get_all_sources():
             "perplexity": _query_perplexity(connection, event_date, limit),
             "pdf": _query_pdfs(connection, event_date, min(limit, 25), include_pdf_content),
         }
+    if compact:
+        _compact_all_sources(sources)
     statuses = {name: value["status"] for name, value in sources.items()}
     total = sum(value["count"] for value in sources.values())
     overall = ("ready" if all(status == "ready" for status in statuses.values())

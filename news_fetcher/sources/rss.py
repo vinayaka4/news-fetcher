@@ -15,6 +15,18 @@ from news_fetcher.raw_store import build_envelope, store_raw_event
 from news_fetcher.raw_store import IST
 
 
+class SourceAccessDeferred(RuntimeError):
+    """The publisher is temporarily blocking this worker's network origin."""
+
+
+BROWSER_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"),
+    "Accept": "application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-IN,en;q=0.9", "Cache-Control": "no-cache",
+}
+
+
 def parse_date(entry: dict[str, Any]) -> str | None:
     raw = entry.get("published") or entry.get("updated") or entry.get("created")
     if not raw:
@@ -58,6 +70,11 @@ def is_duplicate(connection: sqlite3.Connection, url: str, title: str,
 
 def fetch_rss(connection: sqlite3.Connection, source: Source, user_agent: str) -> int:
     response = requests.get(source.url, timeout=30, headers={"User-Agent": user_agent})
+    if response.status_code == 403:
+        response = requests.get(source.url, timeout=30,
+                                headers=BROWSER_HEADERS | {"Referer": "https://indianexpress.com/"})
+    if response.status_code == 403:
+        raise SourceAccessDeferred(f"publisher returned HTTP 403 for {source.key}")
     response.raise_for_status()
     feed = feedparser.parse(response.content)
     if feed.bozo and not feed.entries:

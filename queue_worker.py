@@ -6,6 +6,8 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import requests
+
 from news_fetcher.core import Source, load_sources
 from news_fetcher.database import initialize
 from news_fetcher.db import connect, database_target
@@ -14,6 +16,7 @@ from news_fetcher.sources.pib import hydrate_missing, refresh_existing_audits
 from news_fetcher.job_queue import claim_next, complete, enqueue, fail, initialize_jobs
 from news_fetcher.raw_store import IST
 from news_fetcher.sources.perplexity import load_local_env, request_digest, store_stories
+from news_fetcher.sources.rss import SourceAccessDeferred
 from news_fetcher.consolidation import (ConsolidationError, fetch_daily_snapshot,
                                         request_ai_groups, store_consolidation)
 
@@ -74,7 +77,10 @@ def execute(connection, job) -> None:
         api_key = os.getenv("PERPLEXITY_API_KEY")
         if not api_key:
             raise RuntimeError("PERPLEXITY_API_KEY is not set")
-        snapshot = fetch_daily_snapshot(payload["api_base_url"], payload["date"])
+        try:
+            snapshot = fetch_daily_snapshot(payload["api_base_url"], payload["date"])
+        except requests.Timeout as error:
+            raise UpstreamNotReady("Daily source API timed out while Render was unavailable") from error
         required = {item.strip() for item in os.getenv(
             "CONSOLIDATION_REQUIRED_SOURCES", "pib,rss,perplexity").split(",") if item.strip()}
         unavailable = sorted(source for source in required
@@ -99,7 +105,7 @@ def drain(database: Path, maximum: int) -> tuple[int, int, int]:
                 execute(connection, job)
                 complete(connection, job["id"]); succeeded += 1
                 print(f"complete {job['job_type']} {job['job_key']}", flush=True)
-            except UpstreamNotReady as error:
+            except (UpstreamNotReady, SourceAccessDeferred) as error:
                 connection.rollback()
                 fail(connection, job["id"], f"{type(error).__name__}: {error}")
                 deferred_count += 1

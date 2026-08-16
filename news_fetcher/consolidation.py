@@ -27,7 +27,7 @@ class ConsolidationError(RuntimeError):
 def fetch_daily_snapshot(base_url: str, target_date: str) -> dict:
     response = requests.get(f"{base_url.rstrip('/')}/api/v1/all", timeout=180,
                             params={"date": target_date, "limit": 200,
-                                    "include_pdf_content": "true"})
+                                    "include_pdf_content": "true", "compact": "true"})
     response.raise_for_status()
     payload = response.json()
     if payload.get("date") != target_date or not isinstance(payload.get("sources"), dict):

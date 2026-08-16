@@ -2,6 +2,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 import pytest
+import requests
 
 import dashboard
 import queue_worker
@@ -126,6 +127,16 @@ def test_worker_retries_consolidation_until_required_sources_are_ready(monkeypat
     job = {"job_type": "consolidate_news", "payload_json": (
       '{"date":"2026-08-15","model":"sonar","api_base_url":"https://api.example"}')}
     with pytest.raises(queue_worker.UpstreamNotReady, match="pib"):
+        queue_worker.execute(sqlite3.connect(":memory:"), job)
+
+
+def test_worker_defers_render_timeout(monkeypatch):
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "test-key")
+    monkeypatch.setattr(queue_worker, "fetch_daily_snapshot",
+                        lambda *args: (_ for _ in ()).throw(requests.Timeout("sleeping")))
+    job = {"job_type": "consolidate_news", "payload_json": (
+      '{"date":"2026-08-15","model":"sonar","api_base_url":"https://api.example"}')}
+    with pytest.raises(queue_worker.UpstreamNotReady, match="timed out"):
         queue_worker.execute(sqlite3.connect(":memory:"), job)
 
 

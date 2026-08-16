@@ -39,7 +39,9 @@ def seed_all_sources(database):
            '{"background":"Context"}', "now"))
         envelope = build_envelope(source_type="pdf_upload", source_key="manual_pdf",
           publisher="The Hindu", external_id="pdf-sha", published_at=f"{DATE}T00:00:00+00:00",
-          payload={"newspaper": {"schema_version": "1.1", "sections": []}})
+          payload={"newspaper": {"schema_version": "1.1", "sections": [{"section_name": "News",
+            "articles": [{"id": "a1", "title": "PDF story", "content": ["x" * 3000],
+                          "source_blocks": [{"text": "large layout metadata"}]}]}]}})
         raw_id, _ = store_raw_event(connection, envelope)
         connection.execute("""INSERT INTO uploaded_documents
           (id,original_filename,stored_path,sha256,media_type,page_count,document_date,
@@ -99,3 +101,12 @@ def test_pdf_content_is_linked_by_default_to_control_response_size(tmp_path):
     item = client_for(database).get(f"/api/v1/all?date={DATE}").get_json()["sources"]["pdf"]["items"][0]
     assert item["structured_url"] == "/api/v1/uploads/pdf/pdf-1"
     assert "newspaper" not in item
+
+
+def test_compact_all_source_snapshot_bounds_ai_transfer_size(tmp_path):
+    database = tmp_path / "compact.db"; seed_all_sources(database)
+    payload = client_for(database).get(
+        f"/api/v1/all?date={DATE}&include_pdf_content=true&compact=true").get_json()
+    article = payload["sources"]["pdf"]["items"][0]["newspaper"]["sections"][0]["articles"][0]
+    assert len(article["content"][0]) == 2000
+    assert "source_blocks" not in article
