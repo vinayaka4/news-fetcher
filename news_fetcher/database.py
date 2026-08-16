@@ -111,9 +111,12 @@ def initialize(connection: sqlite3.Connection) -> None:
     # Versions before 2026-08-16 normalized RSS timestamps to UTC while the
     # scheduler and API dates represent IST publication days. Convert those
     # existing rows once; timestamps already carrying +05:30 are untouched.
-    utc_rss_rows = connection.execute("""SELECT id,published_at FROM articles
-      WHERE source_key!='pib' AND (published_at LIKE '%+00:00' OR published_at LIKE '%Z')""").fetchall()
-    for row in utc_rss_rows:
+    rss_timestamp_rows = connection.execute("""SELECT id,published_at FROM articles
+      WHERE source_key!='pib' AND (published_at LIKE ? OR published_at LIKE ?)""",
+      ("%+00:00", "%Z")).fetchall()
+    for row in rss_timestamp_rows:
+        if not str(row[1]).endswith(("+00:00", "Z")):
+            continue
         try:
             converted = datetime.fromisoformat(row[1].replace("Z", "+00:00")).astimezone(IST).isoformat()
         except (AttributeError, TypeError, ValueError):
