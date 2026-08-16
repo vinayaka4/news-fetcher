@@ -20,6 +20,10 @@ from news_fetcher.consolidation import (ConsolidationError, fetch_daily_snapshot
 ROOT = Path(__file__).resolve().parent
 
 
+class UpstreamNotReady(ConsolidationError):
+    """Retryable wait state that must not fail the ingestion workflow."""
+
+
 def enqueue_daily(connection, target_date: str) -> int:
     sources = load_sources(ROOT / "feeds.json")
     requested = {v.strip() for v in os.getenv(
@@ -69,18 +73,18 @@ def execute(connection, job) -> None:
         unavailable = sorted(source for source in required
                              if snapshot.get("source_statuses", {}).get(source) != "ready")
         if unavailable:
-            raise ConsolidationError(f"Required source groups are not ready: {', '.join(unavailable)}")
+            raise UpstreamNotReady(f"Required source groups are not ready: {', '.join(unavailable)}")
         store_consolidation(connection, payload["date"], snapshot, payload["model"],
             lambda candidates: request_ai_groups(api_key, candidates, payload["model"]))
     else:
         raise RuntimeError(f"Unknown job type: {job['job_type']}")
 
 
-def drain(database: Path, maximum: int) -> tuple[int, int]:
-    succeeded = failed_count = 0
+def drain(database: Path, maximum: int) -> tuple[int, int, int]:
+    succeeded = failed_count = deferred_count = 0
     with connect(database) as connection:
         initialize(connection)
-        while maximum <= 0 or succeeded + failed_count < maximum:
+        while maximum <= 0 or succeeded + failed_count + deferred_count < maximum:
             job = claim_next(connection)
             if not job:
                 break
@@ -88,6 +92,11 @@ def drain(database: Path, maximum: int) -> tuple[int, int]:
                 execute(connection, job)
                 complete(connection, job["id"]); succeeded += 1
                 print(f"complete {job['job_type']} {job['job_key']}", flush=True)
+            except UpstreamNotReady as error:
+                connection.rollback()
+                fail(connection, job["id"], f"{type(error).__name__}: {error}")
+                deferred_count += 1
+                print(f"deferred {job['job_type']} {job['job_key']}: {error}", flush=True)
             except Exception as error:
                 # PostgreSQL rejects every command after a statement error until
                 # the transaction is rolled back. Roll back partial source work
@@ -95,7 +104,7 @@ def drain(database: Path, maximum: int) -> tuple[int, int]:
                 connection.rollback()
                 fail(connection, job["id"], f"{type(error).__name__}: {error}"); failed_count += 1
                 print(f"retry {job['job_type']} {job['job_key']}: {error}", flush=True)
-    return succeeded, failed_count
+    return succeeded, failed_count, deferred_count
 
 
 def main() -> int:
@@ -123,18 +132,19 @@ def main() -> int:
         if args.hydrate_missing_pib:
             saved, hydration_failures = hydrate_missing_pib(connection)
             print(f"PIB database hydration: saved={saved}, still_missing={hydration_failures}")
-    retried = 0
+    retried = deferred = 0
     if args.drain:
-        succeeded, retried = drain(args.database, args.max_jobs)
-        print(f"worker complete: succeeded={succeeded}, scheduled_for_retry={retried}")
+        succeeded, retried, deferred = drain(args.database, args.max_jobs)
+        print(f"worker complete: succeeded={succeeded}, scheduled_for_retry={retried}, "
+              f"waiting_for_sources={deferred}")
     exit_code = 1 if (retried or hydration_failures) else 0
     if args.enqueue_daily:
         with connect(args.database) as connection:
             initialize(connection)
             connection.execute("""UPDATE pipeline_runs SET completed_at=?,status=?,message=?
               WHERE run_date_ist=?""", (datetime.now().astimezone().isoformat(),
-              "complete" if exit_code == 0 else "failed",
-              f"retry_jobs={retried},missing_pib={hydration_failures}", args.date))
+              "failed" if exit_code else ("partial" if deferred else "complete"),
+              f"retry_jobs={retried},deferred_jobs={deferred},missing_pib={hydration_failures}", args.date))
             connection.commit()
     return exit_code
 

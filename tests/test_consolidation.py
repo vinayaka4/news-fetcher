@@ -108,5 +108,22 @@ def test_worker_retries_consolidation_until_required_sources_are_ready(monkeypat
       "source_statuses": {"pib": "partial", "rss": "ready", "perplexity": "ready"}})
     job = {"job_type": "consolidate_news", "payload_json": (
       '{"date":"2026-08-15","model":"sonar","api_base_url":"https://api.example"}')}
-    with pytest.raises(ConsolidationError, match="pib"):
+    with pytest.raises(queue_worker.UpstreamNotReady, match="pib"):
         queue_worker.execute(sqlite3.connect(":memory:"), job)
+
+
+def test_deferred_consolidation_is_retried_without_failing_worker(monkeypatch, tmp_path):
+    database = tmp_path / "deferred.db"
+    with sqlite3.connect(database) as connection:
+        initialize(connection)
+        from news_fetcher.job_queue import enqueue
+        enqueue(connection, job_key=f"consolidate:{DATE}", job_type="consolidate_news",
+                source_key="consolidated", payload={"date": DATE})
+        connection.commit()
+    monkeypatch.setattr(queue_worker, "execute", lambda *args: (_ for _ in ()).throw(
+        queue_worker.UpstreamNotReady("PIB is still loading")))
+    assert queue_worker.drain(database, 1) == (0, 0, 1)
+    with sqlite3.connect(database) as connection:
+        status, error = connection.execute(
+            "SELECT status,last_error FROM ingestion_jobs").fetchone()
+    assert status == "retry" and "still loading" in error

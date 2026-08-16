@@ -403,7 +403,7 @@ def test_worker_rolls_back_source_transaction_before_recording_retry(tmp_path, m
         raise RuntimeError("source failed")
 
     monkeypatch.setattr(queue_worker, "execute", partially_write_then_fail)
-    assert queue_worker.drain(database, 1) == (0, 1)
+    assert queue_worker.drain(database, 1) == (0, 1, 0)
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT COUNT(*) FROM articles WHERE id='partial'").fetchone()[0] == 0
         status, error = connection.execute(
