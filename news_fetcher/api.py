@@ -8,6 +8,7 @@ from pathlib import Path
 from flask import Blueprint, current_app, jsonify, request
 
 from news_fetcher.db import connect as db_connect
+from news_fetcher.consolidation import newspaper_from_url
 from news_fetcher.sources.pdf_reader import MAX_UPLOAD_BYTES, PdfIngestionError, ingest_upload
 
 api = Blueprint("api", __name__, url_prefix="/api/v1")
@@ -327,8 +328,31 @@ def get_consolidated():
         item["key_facts"] = json.loads(item.pop("key_facts_json"))
         item["source_record_ids"] = json.loads(item.pop("source_refs_json"))
         item["sources"] = [{key: source_records[record_id].get(key)
-                            for key in ("record_id", "source_type", "publisher", "title", "url")}
+                            for key in ("record_id", "source_type", "source_tag", "publisher",
+                                        "newspaper", "newspapers", "title", "url", "urls")}
                            for record_id in item["source_record_ids"] if record_id in source_records]
+        tag_counts = {}
+        for source in item["sources"]:
+            source["source_tag"] = source.get("source_tag") or source.get("source_type")
+            newspapers = source.get("newspapers") or []
+            if not newspapers and source.get("newspaper"):
+                newspapers = [source["newspaper"]]
+            if not newspapers and source["source_tag"] in {"rss", "pdf"} and source.get("publisher"):
+                newspapers = [source["publisher"]]
+            if not newspapers and source["source_tag"] == "perplexity":
+                inferred = [newspaper_from_url(url) for url in
+                            (source.get("urls") or [source.get("url")]) if url]
+                newspapers = list(dict.fromkeys(name for name in inferred if name))
+            source["newspapers"] = newspapers
+            source["newspaper"] = newspapers[0] if len(newspapers) == 1 else source.get("newspaper")
+            names = source.get("newspapers") or [source.get("newspaper")]
+            names = [name for name in names if name] or [None]
+            for newspaper in names:
+                key = (source.get("source_tag") or source.get("source_type"), newspaper)
+                tag_counts[key] = tag_counts.get(key, 0) + 1
+        item["source_tags"] = [{"source_tag": tag, "newspaper": newspaper, "count": count}
+                               for (tag, newspaper), count in sorted(
+                                   tag_counts.items(), key=lambda value: (value[0][0], value[0][1] or ""))]
         items.append(item)
     return jsonify({"date": event_date, "source": "consolidated", "status": "ready",
                     "count": len(items), "run": run_item, "items": items})

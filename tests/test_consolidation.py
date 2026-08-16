@@ -22,7 +22,8 @@ def snapshot():
         "title": "Cabinet approves new education mission", "article_url": "https://paper/r1",
         "content_text": "The national programme received Cabinet approval."}]},
       "perplexity": {"items": [{"id": "d1", "headline": "Education mission approved",
-        "summary": ["Cabinet approval was announced."], "source_urls": ["https://paper/r1"]}]},
+        "summary": ["Cabinet approval was announced."], "source_urls": [
+          "https://www.thehindu.com/news/story", "https://indianexpress.com/article/story"]}]},
       "pdf": {"items": [{"id": "pdf1", "source_name": "Paper",
         "structured_url": "/api/v1/uploads/pdf/pdf1", "newspaper": {"sections": [{"articles": [{
           "id": "a1", "title": "Sports result", "content": ["The home team won."]}]}]}}]}}}
@@ -45,6 +46,11 @@ def test_normalization_preserves_traceable_ids_for_all_four_sources():
     assert {item["source_type"] for item in records} == {"pib", "rss", "perplexity", "pdf"}
     assert {item["record_id"] for item in records} == {
         "pib:p1", "rss:r1", "perplexity:d1", "pdf:pdf1:a1"}
+    by_type = {item["source_type"]: item for item in records}
+    assert by_type["pib"]["source_tag"] == "pib" and by_type["pib"]["newspaper"] is None
+    assert by_type["rss"]["newspaper"] == "Paper"
+    assert by_type["pdf"]["newspaper"] == "Paper"
+    assert by_type["perplexity"]["newspapers"] == ["The Hindu", "The Indian Express"]
 
 
 def test_consolidation_is_atomic_idempotent_and_preserves_raw_events(tmp_path):
@@ -88,6 +94,11 @@ def test_consolidated_api_returns_latest_completed_run(tmp_path):
     assert payload["items"][0]["summary"][0].startswith("The supplied")
     assert {source["source_type"] for source in payload["items"][0]["sources"]} == {
         "pib", "rss", "perplexity", "pdf"}
+    tags = {(tag["source_tag"], tag["newspaper"]) for tag in payload["items"][0]["source_tags"]}
+    assert ("pib", None) in tags
+    assert ("rss", "Paper") in tags and ("pdf", "Paper") in tags
+    assert ("perplexity", "The Hindu") in tags
+    assert ("perplexity", "The Indian Express") in tags
 
 
 def test_consolidated_api_validates_date_and_returns_no_data(tmp_path):

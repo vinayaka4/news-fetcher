@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import requests
 
@@ -40,21 +41,49 @@ def _text(value: Any, maximum: int = 1600) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:maximum]
 
 
+NEWSPAPER_DOMAINS = {
+    "thehindu.com": "The Hindu", "indianexpress.com": "The Indian Express",
+    "timesofindia.indiatimes.com": "Times of India", "deccanherald.com": "Deccan Herald",
+    "pib.gov.in": "Press Information Bureau", "www.pib.gov.in": "Press Information Bureau",
+}
+
+
+def newspaper_from_url(url: str | None) -> str | None:
+    try:
+        host = urlsplit(url or "").netloc.lower().removeprefix("www.")
+    except (TypeError, ValueError):
+        return None
+    for domain, name in NEWSPAPER_DOMAINS.items():
+        if host == domain.removeprefix("www.") or host.endswith("." + domain.removeprefix("www.")):
+            return name
+    return host or None
+
+
 def normalize_snapshot(snapshot: dict) -> list[dict]:
     records: list[dict] = []
     sources = snapshot.get("sources", {})
     for item in sources.get("pib", {}).get("items", []):
         records.append({"record_id": f"pib:{item['id']}", "source_type": "pib",
-          "publisher": "Press Information Bureau", "title": _text(item.get("title"), 300),
-          "url": item.get("article_url"), "content": _text(item.get("full_text"))})
+          "source_tag": "pib", "publisher": "Press Information Bureau", "newspaper": None,
+          "newspapers": [], "title": _text(item.get("title"), 300),
+          "url": item.get("article_url"), "urls": [item["article_url"]] if item.get("article_url") else [],
+          "content": _text(item.get("full_text"))})
     for item in sources.get("rss", {}).get("items", []):
         records.append({"record_id": f"rss:{item['id']}", "source_type": "rss",
-          "publisher": item.get("publisher"), "title": _text(item.get("title"), 300),
-          "url": item.get("article_url"), "content": _text(item.get("content_text"))})
+          "source_tag": "rss", "publisher": item.get("publisher"),
+          "newspaper": item.get("publisher"), "newspapers": [item.get("publisher")],
+          "title": _text(item.get("title"), 300), "url": item.get("article_url"),
+          "urls": [item["article_url"]] if item.get("article_url") else [],
+          "content": _text(item.get("content_text"))})
     for item in sources.get("perplexity", {}).get("items", []):
+        urls = list(dict.fromkeys(url for url in item.get("source_urls", []) if url))
+        newspapers = list(dict.fromkeys(name for name in
+                           (newspaper_from_url(url) for url in urls) if name))
         records.append({"record_id": f"perplexity:{item['id']}", "source_type": "perplexity",
-          "publisher": "Perplexity Digest", "title": _text(item.get("headline"), 300),
-          "url": (item.get("source_urls") or [None])[0],
+          "source_tag": "perplexity", "publisher": "Perplexity Digest",
+          "newspaper": newspapers[0] if len(newspapers) == 1 else None,
+          "newspapers": newspapers, "title": _text(item.get("headline"), 300),
+          "url": urls[0] if urls else None, "urls": urls,
           "content": _text(item.get("summary"))})
     for document in sources.get("pdf", {}).get("items", []):
         newspaper = document.get("newspaper") or {}
@@ -64,8 +93,11 @@ def normalize_snapshot(snapshot: dict) -> list[dict]:
                 if not title:
                     continue
                 records.append({"record_id": f"pdf:{document['id']}:{article['id']}",
-                  "source_type": "pdf", "publisher": document.get("source_name"),
-                  "title": title, "url": document.get("structured_url"),
+                  "source_type": "pdf", "source_tag": "pdf",
+                  "publisher": document.get("source_name"), "newspaper": document.get("source_name"),
+                  "newspapers": [document.get("source_name")], "title": title,
+                  "url": document.get("structured_url"),
+                  "urls": [document["structured_url"]] if document.get("structured_url") else [],
                   "content": _text(article.get("content"))})
     unique = {record["record_id"]: record for record in records if record["title"]}
     return [unique[key] for key in sorted(unique)]
