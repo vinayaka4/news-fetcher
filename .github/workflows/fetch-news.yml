@@ -30,6 +30,8 @@ jobs:
       PERPLEXITY_MODEL: sonar
       NEWS_ENABLED_SOURCES: pib,times_of_india_top,times_of_india_india
       NEWS_USER_AGENT: UPSCNewsFetcher/1.0
+      NEWS_API_BASE_URL: https://news-fetcher-oav3.onrender.com
+      CONSOLIDATION_MODEL: sonar
       TARGET_DATE: ${{ inputs.date }}
 
     steps:

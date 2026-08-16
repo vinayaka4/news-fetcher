@@ -131,6 +131,29 @@ counts and statuses, and sets top-level `complete` only when all four source
 groups are ready. PDF records contain a `structured_url` by default; add
 `include_pdf_content=true` only when the caller needs the full newspaper JSON.
 
+## AI consolidation service
+
+Consolidate duplicate coverage from the four-source API without changing any
+raw or normalized source records:
+
+```powershell
+python consolidate_news.py --date 2026-08-09 --api-base-url http://127.0.0.1:5000
+```
+
+The service performs deterministic pre-clustering, asks the configured AI model
+to merge semantic duplicates, rejects responses that omit or duplicate an input,
+and atomically writes versioned rows to `consolidation_runs` and
+`consolidated_stories`. Identical input is idempotent. Read the latest completed
+version for a date from:
+
+```text
+GET /api/v1/consolidated?date=2026-08-09
+```
+
+Each consolidated story contains its source record IDs and compact source
+citations. The original source data remains in `raw_events`, `articles`,
+`digest_stories`, and the uploaded PDF records.
+
 Pipeline health is available from `GET /api/v1/pipeline/status`. RSS and
 Perplexity source jobs survive restarts and retry with exponential backoff.
 PIB uses empty `articles.full_text` rows directly as its durable work list.

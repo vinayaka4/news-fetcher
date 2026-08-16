@@ -30,6 +30,25 @@ def initialize(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_digest_stories_date ON digest_stories(published_at);
         CREATE INDEX IF NOT EXISTS idx_digest_stories_category ON digest_stories(category);
         CREATE INDEX IF NOT EXISTS idx_digest_stories_upsc ON digest_stories(upsc_relevance);
+        CREATE TABLE IF NOT EXISTS consolidation_runs (
+            id TEXT PRIMARY KEY, publication_date TEXT NOT NULL,
+            input_hash TEXT NOT NULL, input_count INTEGER NOT NULL,
+            output_count INTEGER, model TEXT NOT NULL, prompt_version TEXT NOT NULL,
+            status TEXT NOT NULL, source_snapshot_json TEXT NOT NULL,
+            started_at TEXT NOT NULL, completed_at TEXT, error TEXT,
+            UNIQUE(publication_date,input_hash,model,prompt_version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_consolidation_runs_date_status
+          ON consolidation_runs(publication_date,status,completed_at);
+        CREATE TABLE IF NOT EXISTS consolidated_stories (
+            id TEXT PRIMARY KEY, run_id TEXT NOT NULL, publication_date TEXT NOT NULL,
+            title TEXT NOT NULL, category TEXT NOT NULL, summary_json TEXT NOT NULL,
+            key_facts_json TEXT NOT NULL, source_refs_json TEXT NOT NULL,
+            source_count INTEGER NOT NULL, created_at TEXT NOT NULL,
+            FOREIGN KEY(run_id) REFERENCES consolidation_runs(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_consolidated_stories_date
+          ON consolidated_stories(publication_date,run_id);
         CREATE TABLE IF NOT EXISTS pib_ingestion_runs (
             publication_date TEXT PRIMARY KEY,
             expected_count INTEGER NOT NULL,

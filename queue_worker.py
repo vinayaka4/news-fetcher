@@ -14,6 +14,8 @@ from news_fetcher.sources.pib import hydrate_missing, refresh_existing_audits
 from news_fetcher.job_queue import claim_next, complete, enqueue, fail, initialize_jobs
 from news_fetcher.raw_store import IST
 from news_fetcher.sources.perplexity import load_local_env, request_digest, store_stories
+from news_fetcher.consolidation import (ConsolidationError, fetch_daily_snapshot,
+                                        request_ai_groups, store_consolidation)
 
 ROOT = Path(__file__).resolve().parent
 
@@ -32,8 +34,12 @@ def enqueue_daily(connection, target_date: str) -> int:
     enqueue(connection, job_key=f"perplexity:{target_date}", job_type="fetch_perplexity",
             source_key="perplexity", payload={"date": target_date,
             "model": os.getenv("PERPLEXITY_MODEL", "sonar")})
+    enqueue(connection, job_key=f"consolidate:{target_date}", job_type="consolidate_news",
+            source_key="consolidated", payload={"date": target_date,
+            "model": os.getenv("CONSOLIDATION_MODEL", os.getenv("PERPLEXITY_MODEL", "sonar")),
+            "api_base_url": os.getenv("NEWS_API_BASE_URL", "http://127.0.0.1:5000")})
     connection.commit()
-    return count + 1
+    return count + 2
 
 
 def hydrate_missing_pib(connection) -> tuple[int, int]:
@@ -53,6 +59,19 @@ def execute(connection, job) -> None:
             raise RuntimeError("PERPLEXITY_API_KEY is not set")
         stories, _ = request_digest(api_key, payload["date"], payload["model"])
         store_stories(connection, stories)
+    elif job["job_type"] == "consolidate_news":
+        api_key = os.getenv("PERPLEXITY_API_KEY")
+        if not api_key:
+            raise RuntimeError("PERPLEXITY_API_KEY is not set")
+        snapshot = fetch_daily_snapshot(payload["api_base_url"], payload["date"])
+        required = {item.strip() for item in os.getenv(
+            "CONSOLIDATION_REQUIRED_SOURCES", "pib,rss,perplexity").split(",") if item.strip()}
+        unavailable = sorted(source for source in required
+                             if snapshot.get("source_statuses", {}).get(source) != "ready")
+        if unavailable:
+            raise ConsolidationError(f"Required source groups are not ready: {', '.join(unavailable)}")
+        store_consolidation(connection, payload["date"], snapshot, payload["model"],
+            lambda candidates: request_ai_groups(api_key, candidates, payload["model"]))
     else:
         raise RuntimeError(f"Unknown job type: {job['job_type']}")
 

@@ -25,6 +25,7 @@ def api_index():
         "rss_by_date": "/api/v1/rss?date=YYYY-MM-DD",
         "perplexity_by_date": "/api/v1/perplexity?date=YYYY-MM-DD",
         "all_sources_by_date": "/api/v1/all?date=YYYY-MM-DD",
+        "consolidated_by_date": "/api/v1/consolidated?date=YYYY-MM-DD",
         "articles": "/api/v1/articles?date=YYYY-MM-DD&source=pib&content_status=ready",
         "raw_events": "/api/v1/news?date=YYYY-MM-DD",
         "pdf_newspapers": "/api/v1/uploads/pdf?date=YYYY-MM-DD",
@@ -294,6 +295,43 @@ def get_all_sources():
                     "complete": overall == "ready", "total_count": total,
                     "source_counts": {name: value["count"] for name, value in sources.items()},
                     "source_statuses": statuses, "sources": sources})
+
+
+@api.get("/consolidated")
+def get_consolidated():
+    try:
+        event_date, limit = _request_date_and_limit(default_limit=100, maximum=500)
+    except (ValueError, TypeError):
+        return jsonify({"error": "date must be YYYY-MM-DD and limit must be an integer"}), 400
+    with connect() as connection:
+        run = connection.execute("""SELECT id,input_hash,input_count,output_count,model,
+          prompt_version,started_at,completed_at,source_snapshot_json FROM consolidation_runs
+          WHERE publication_date=? AND status='complete'
+          ORDER BY completed_at DESC,id DESC LIMIT 1""", (event_date,)).fetchone()
+        if not run:
+            return jsonify({"date": event_date, "source": "consolidated",
+                            "status": "no_data", "count": 0, "items": []})
+        rows = connection.execute("""SELECT id,title,category,summary_json,key_facts_json,
+          source_refs_json,source_count,created_at FROM consolidated_stories
+          WHERE run_id=? ORDER BY id LIMIT ?""", (run["id"], limit)).fetchall()
+    run_item = dict(run)
+    try:
+        source_records = {item["record_id"]: item for item in
+                          json.loads(run_item.pop("source_snapshot_json"))}
+    except (TypeError, KeyError, json.JSONDecodeError):
+        source_records = {}; run_item.pop("source_snapshot_json", None)
+    items = []
+    for row in rows:
+        item = dict(row)
+        item["summary"] = json.loads(item.pop("summary_json"))
+        item["key_facts"] = json.loads(item.pop("key_facts_json"))
+        item["source_record_ids"] = json.loads(item.pop("source_refs_json"))
+        item["sources"] = [{key: source_records[record_id].get(key)
+                            for key in ("record_id", "source_type", "publisher", "title", "url")}
+                           for record_id in item["source_record_ids"] if record_id in source_records]
+        items.append(item)
+    return jsonify({"date": event_date, "source": "consolidated", "status": "ready",
+                    "count": len(items), "run": run_item, "items": items})
 
 
 @api.get("/news")
