@@ -115,8 +115,21 @@ Each item includes `publisher`, `source_key`, `title`, `article_url`,
 Perplexity structured summaries are available from:
 
 ```text
-GET /api/v1/digests?date=2026-08-09&limit=100
+GET /api/v1/perplexity?date=2026-08-09&limit=100
+GET /api/v1/rss?date=2026-08-09&limit=100
 ```
+
+`/api/v1/digests` remains an alias for the Perplexity endpoint. A single
+date-filtered snapshot containing PIB, RSS, Perplexity, and uploaded PDFs is:
+
+```text
+GET /api/v1/all?date=2026-08-09&limit=100
+```
+
+The combined response keeps each source under `sources`, reports per-source
+counts and statuses, and sets top-level `complete` only when all four source
+groups are ready. PDF records contain a `structured_url` by default; add
+`include_pdf_content=true` only when the caller needs the full newspaper JSON.
 
 Pipeline health is available from `GET /api/v1/pipeline/status`. RSS and
 Perplexity source jobs survive restarts and retry with exponential backoff.

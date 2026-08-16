@@ -22,6 +22,9 @@ def api_index():
         "pib_by_date": "/api/v1/pib?date=YYYY-MM-DD",
         "pib_completeness": "/api/v1/pib/completeness?date=YYYY-MM-DD",
         "pib_health": "/api/v1/pib/health",
+        "rss_by_date": "/api/v1/rss?date=YYYY-MM-DD",
+        "perplexity_by_date": "/api/v1/perplexity?date=YYYY-MM-DD",
+        "all_sources_by_date": "/api/v1/all?date=YYYY-MM-DD",
         "articles": "/api/v1/articles?date=YYYY-MM-DD&source=pib&content_status=ready",
         "raw_events": "/api/v1/news?date=YYYY-MM-DD",
         "pdf_newspapers": "/api/v1/uploads/pdf?date=YYYY-MM-DD",
@@ -42,6 +45,107 @@ def parse_iso_date(value: str | None) -> str:
     if not value:
         return datetime.now(timezone.utc).date().isoformat()
     return date.fromisoformat(value).isoformat()
+
+
+def _request_date_and_limit(default_limit: int = 100, maximum: int = 500) -> tuple[str, int]:
+    return (parse_iso_date(request.args.get("date")),
+            min(max(int(request.args.get("limit", str(default_limit))), 1), maximum))
+
+
+def _article_item(row) -> dict:
+    item = dict(row)
+    full_text = (item.get("full_text") or "").strip()
+    excerpt = (item.get("excerpt") or "").strip()
+    item["content_kind"] = "full_text" if full_text else ("rss_excerpt" if excerpt else "metadata_only")
+    item["content_text"] = full_text or excerpt or None
+    item["content_status"] = "ready" if (full_text or item["source_key"] != "pib") else "pending"
+    return item
+
+
+def _digest_item(row) -> dict:
+    item = dict(row)
+    errors = []
+    for column, output, fallback in (("summary_json", "summary", []),
+                                      ("source_urls_json", "source_urls", []),
+                                      ("details_json", "details", None)):
+        raw = item.pop(column, None)
+        try:
+            item[output] = json.loads(raw) if raw else fallback
+        except (TypeError, json.JSONDecodeError):
+            item[output] = fallback
+            errors.append(f"invalid_{column}")
+    item["content_status"] = "ready" if not errors else "partial"
+    item["content_kind"] = "structured_summary"
+    item["data_quality_flags"] = errors
+    return item
+
+
+def _query_pib(connection, event_date: str, limit: int) -> dict:
+    rows = connection.execute("""SELECT id,title,article_url,published_at,ministry,
+      full_text,fetched_at FROM articles WHERE source_key='pib'
+      AND substr(published_at,1,10)=? ORDER BY published_at DESC,id LIMIT ?""",
+      (event_date, limit)).fetchall()
+    audit = connection.execute("""SELECT expected_count,discovered_count,ready_count,
+      missing_count,complete FROM pib_ingestion_runs WHERE publication_date=?""",
+      (event_date,)).fetchone()
+    complete = bool(audit["complete"]) if audit else False
+    return {"source": "pib", "date": event_date, "count": len(rows),
+            "status": "ready" if complete else ("partial" if rows else "no_data"),
+            "complete": complete, "completeness": dict(audit) if audit else None,
+            "items": [dict(row) | {"content_status": "ready" if row["full_text"] else "pending"}
+                      for row in rows]}
+
+
+def _query_rss(connection, event_date: str, limit: int, cursor: str = "") -> dict:
+    cursor_sql, parameters = ("AND id>?", (event_date, cursor, limit + 1)) if cursor \
+        else ("", (event_date, limit + 1))
+    rows = connection.execute(f"""SELECT id,publisher,source_key,title,article_url,published_at,
+      author,excerpt,ministry,full_text,fetched_at FROM articles
+      WHERE source_key!='pib' AND substr(published_at,1,10)=?
+      {cursor_sql} ORDER BY id LIMIT ?""", parameters).fetchall()
+    has_more = len(rows) > limit; rows = rows[:limit]
+    items = [_article_item(row) for row in rows]
+    return {"source": "rss", "date": event_date, "count": len(items),
+            "status": "ready" if items else "no_data", "complete": None,
+            "coverage": "best_effort_feed_coverage",
+            "next_cursor": rows[-1]["id"] if has_more and rows else None, "items": items}
+
+
+def _query_perplexity(connection, event_date: str, limit: int, cursor: str = "") -> dict:
+    cursor_sql, parameters = ("AND id>?", (event_date, cursor, limit + 1)) if cursor \
+        else ("", (event_date, limit + 1))
+    rows = connection.execute(f"""SELECT * FROM digest_stories
+      WHERE substr(published_at,1,10)=? {cursor_sql} ORDER BY id LIMIT ?""", parameters).fetchall()
+    has_more = len(rows) > limit; rows = rows[:limit]
+    items = [_digest_item(row) for row in rows]
+    status = ("partial" if any(item["content_status"] == "partial" for item in items)
+              else "ready" if items else "no_data")
+    return {"source": "perplexity", "date": event_date, "count": len(items),
+            "status": status, "complete": None, "coverage": "best_effort_search_summary",
+            "next_cursor": rows[-1]["id"] if has_more and rows else None, "items": items}
+
+
+def _query_pdfs(connection, event_date: str, limit: int, include_content: bool) -> dict:
+    rows = connection.execute("""SELECT d.id,d.original_filename,d.document_date,d.source_name,
+      d.page_count,d.uploaded_at,r.raw_json FROM uploaded_documents d
+      JOIN raw_events r ON r.id=d.raw_event_id WHERE d.document_date=?
+      ORDER BY d.uploaded_at DESC,d.id LIMIT ?""", (event_date, limit)).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row); raw_json = item.pop("raw_json")
+        item["structured_url"] = f"/api/v1/uploads/pdf/{item['id']}"
+        try:
+            newspaper = json.loads(raw_json).get("payload", {}).get("newspaper")
+        except (TypeError, json.JSONDecodeError):
+            newspaper = None
+        item["content_status"] = "ready" if newspaper else "partial"
+        if include_content:
+            item["newspaper"] = newspaper
+        items.append(item)
+    status = ("partial" if any(item["content_status"] == "partial" for item in items)
+              else "ready" if items else "no_data")
+    return {"source": "pdf", "date": event_date, "count": len(items), "status": status,
+            "complete": None, "coverage": "manual_uploads", "items": items}
 
 
 @api.get("/articles")
@@ -142,32 +246,54 @@ def healthz():
 
 
 @api.get("/digests")
+@api.get("/perplexity")
 def get_digests():
     try:
-        event_date = parse_iso_date(request.args.get("date"))
-        limit = min(max(int(request.args.get("limit", "100")), 1), 500)
+        event_date, limit = _request_date_and_limit()
     except (ValueError, TypeError):
         return jsonify({"error": "date must be YYYY-MM-DD and limit must be an integer"}), 400
     cursor = request.args.get("cursor", "").strip()
-    conditions, values = ["substr(published_at,1,10)=?"], [event_date]
-    if cursor:
-        conditions.append("id > ?"); values.append(cursor)
     with connect() as connection:
-        rows = connection.execute(f"""SELECT * FROM digest_stories
-          WHERE {' AND '.join(conditions)} ORDER BY id LIMIT ?""", (*values, limit + 1)).fetchall()
-    has_more = len(rows) > limit; rows = rows[:limit]
-    items = []
-    for row in rows:
-        item = dict(row)
-        item["summary"] = json.loads(item.pop("summary_json"))
-        item["source_urls"] = json.loads(item.pop("source_urls_json"))
-        item["details"] = json.loads(item.pop("details_json")) if item.get("details_json") else None
-        item.pop("details_json", None)
-        item["content_status"] = "ready"
-        item["content_kind"] = "structured_summary"
-        items.append(item)
-    return jsonify({"date": event_date, "source": "perplexity", "count": len(items),
-                    "next_cursor": rows[-1]["id"] if has_more and rows else None, "items": items})
+        result = _query_perplexity(connection, event_date, limit, cursor)
+    return jsonify(result)
+
+
+@api.get("/rss")
+def get_rss():
+    try:
+        event_date, limit = _request_date_and_limit()
+    except (ValueError, TypeError):
+        return jsonify({"error": "date must be YYYY-MM-DD and limit must be an integer"}), 400
+    cursor = request.args.get("cursor", "").strip()
+    with connect() as connection:
+        result = _query_rss(connection, event_date, limit, cursor)
+    return jsonify(result)
+
+
+@api.get("/all")
+def get_all_sources():
+    """Return a consistent date snapshot for PIB, RSS, Perplexity, and PDFs."""
+    try:
+        event_date, limit = _request_date_and_limit(default_limit=100, maximum=200)
+    except (ValueError, TypeError):
+        return jsonify({"error": "date must be YYYY-MM-DD and limit must be an integer"}), 400
+    include_pdf_content = request.args.get("include_pdf_content", "false").strip().lower() in {
+        "1", "true", "yes"}
+    with connect() as connection:
+        sources = {
+            "pib": _query_pib(connection, event_date, limit),
+            "rss": _query_rss(connection, event_date, limit),
+            "perplexity": _query_perplexity(connection, event_date, limit),
+            "pdf": _query_pdfs(connection, event_date, min(limit, 25), include_pdf_content),
+        }
+    statuses = {name: value["status"] for name, value in sources.items()}
+    total = sum(value["count"] for value in sources.values())
+    overall = ("ready" if all(status == "ready" for status in statuses.values())
+               else "partial" if total else "no_data")
+    return jsonify({"date": event_date, "status": overall,
+                    "complete": overall == "ready", "total_count": total,
+                    "source_counts": {name: value["count"] for name, value in sources.items()},
+                    "source_statuses": statuses, "sources": sources})
 
 
 @api.get("/news")
