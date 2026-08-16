@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -43,13 +43,24 @@ def enqueue_daily(connection, target_date: str) -> int:
         enqueue(connection, job_key=f"source:{source.key}:{target_date}", job_type="fetch_source",
                 source_key=source.key, payload=source.__dict__)
         count += 1
-    enqueue(connection, job_key=f"perplexity:{target_date}", job_type="fetch_perplexity",
+    perplexity_job = enqueue(connection, job_key=f"perplexity:{target_date}", job_type="fetch_perplexity",
             source_key="perplexity", payload={"date": target_date,
             "model": os.getenv("PERPLEXITY_MODEL", "sonar")})
-    enqueue(connection, job_key=f"consolidate:{target_date}", job_type="consolidate_news",
+    consolidation_job = enqueue(connection, job_key=f"consolidate:{target_date}", job_type="consolidate_news",
             source_key="consolidated", payload={"date": target_date,
             "model": os.getenv("CONSOLIDATION_MODEL", os.getenv("PERPLEXITY_MODEL", "sonar")),
             "api_base_url": os.getenv("NEWS_API_BASE_URL", "http://127.0.0.1:5000")})
+    timestamp = datetime.now(timezone.utc).isoformat()
+    if not connection.execute("""SELECT 1 FROM digest_stories
+      WHERE substr(published_at,1,10)=? LIMIT 1""", (target_date,)).fetchone():
+        connection.execute("""UPDATE ingestion_jobs SET status='pending',attempts=0,
+          next_attempt_at=?,completed_at=NULL,last_error=NULL,updated_at=?
+          WHERE id=? AND status='complete'""", (timestamp, timestamp, perplexity_job))
+    if not connection.execute("""SELECT 1 FROM consolidation_runs
+      WHERE publication_date=? AND status='complete' LIMIT 1""", (target_date,)).fetchone():
+        connection.execute("""UPDATE ingestion_jobs SET status='pending',attempts=0,
+          next_attempt_at=?,completed_at=NULL,last_error=NULL,updated_at=?
+          WHERE id=? AND status='complete'""", (timestamp, timestamp, consolidation_job))
     connection.commit()
     return count + 2
 

@@ -120,6 +120,24 @@ def test_daily_queue_includes_durable_consolidation_after_source_jobs(monkeypatc
     assert {row[0] for row in jobs} == {"fetch_source", "fetch_perplexity", "consolidate_news"}
 
 
+def test_daily_queue_reopens_completed_jobs_when_database_projection_is_missing(monkeypatch):
+    monkeypatch.setenv("NEWS_ENABLED_SOURCES", "pib")
+    connection = sqlite3.connect(":memory:"); initialize(connection)
+    from news_fetcher.job_queue import claim_next, complete
+    queue_worker.enqueue_daily(connection, DATE)
+    while True:
+        job = claim_next(connection)
+        if not job:
+            break
+        complete(connection, job["id"])
+    assert connection.execute("""SELECT COUNT(*) FROM ingestion_jobs
+      WHERE source_key IN ('perplexity','consolidated') AND status='complete'""").fetchone()[0] == 2
+    queue_worker.enqueue_daily(connection, DATE)
+    statuses = dict(connection.execute("""SELECT source_key,status FROM ingestion_jobs
+      WHERE source_key IN ('perplexity','consolidated')""").fetchall())
+    assert statuses == {"perplexity": "pending", "consolidated": "pending"}
+
+
 def test_worker_retries_consolidation_until_required_sources_are_ready(monkeypatch):
     monkeypatch.setenv("PERPLEXITY_API_KEY", "test-key")
     monkeypatch.setattr(queue_worker, "fetch_daily_snapshot", lambda *args: {
