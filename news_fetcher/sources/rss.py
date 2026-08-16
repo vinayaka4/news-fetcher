@@ -12,6 +12,7 @@ from dateutil import parser as date_parser
 
 from news_fetcher.core import Source, canonical_url, clean_text, normalize_title
 from news_fetcher.raw_store import build_envelope, store_raw_event
+from news_fetcher.raw_store import IST
 
 
 def parse_date(entry: dict[str, Any]) -> str | None:
@@ -22,7 +23,10 @@ def parse_date(entry: dict[str, Any]) -> str | None:
         value = date_parser.parse(raw)
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc).isoformat()
+        # Daily ingestion and all public date APIs use the Indian publication
+        # day. Retain the offset so midnight-boundary stories are not filed
+        # under the previous UTC date.
+        return value.astimezone(IST).isoformat()
     except (TypeError, ValueError, OverflowError):
         return None
 
@@ -39,12 +43,16 @@ def extract_ministry(entry: dict[str, Any]) -> str | None:
 
 
 def is_duplicate(connection: sqlite3.Connection, url: str, title: str,
-                 threshold: float = 0.88) -> bool:
+                 threshold: float = 0.88, source_key: str | None = None) -> bool:
     if connection.execute("SELECT 1 FROM articles WHERE article_url=?", (url,)).fetchone():
         return True
     normalized = normalize_title(title)
-    rows = connection.execute(
-        "SELECT normalized_title FROM articles ORDER BY fetched_at DESC LIMIT 500").fetchall()
+    if source_key:
+        rows = connection.execute("""SELECT normalized_title FROM articles
+          WHERE source_key=? ORDER BY fetched_at DESC LIMIT 500""", (source_key,)).fetchall()
+    else:
+        rows = connection.execute(
+            "SELECT normalized_title FROM articles ORDER BY fetched_at DESC LIMIT 500").fetchall()
     return any(SequenceMatcher(None, normalized, row[0]).ratio() >= threshold for row in rows)
 
 
@@ -64,7 +72,7 @@ def fetch_rss(connection: sqlite3.Connection, source: Source, user_agent: str) -
             source_type="rss", source_key=source.key, publisher=source.publisher,
             external_id=url, published_at=published_at, payload=dict(entry),
             metadata={"feed_url": source.url}))
-        if is_duplicate(connection, url, title):
+        if is_duplicate(connection, url, title, source_key=source.key):
             continue
         article_id = hashlib.sha256(url.encode()).hexdigest()
         connection.execute("""INSERT INTO articles

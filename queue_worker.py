@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from news_fetcher.core import Source, load_sources
@@ -24,10 +24,15 @@ class UpstreamNotReady(ConsolidationError):
     """Retryable wait state that must not fail the ingestion workflow."""
 
 
+def default_target_date(now: datetime | None = None) -> str:
+    return ((now or datetime.now(IST)).astimezone(IST) - timedelta(days=1)).date().isoformat()
+
+
 def enqueue_daily(connection, target_date: str) -> int:
     sources = load_sources(ROOT / "feeds.json")
     requested = {v.strip() for v in os.getenv(
-        "NEWS_ENABLED_SOURCES", "pib,times_of_india_top,times_of_india_india").split(",") if v.strip()}
+        "NEWS_ENABLED_SOURCES", "pib,indian_express_india,indian_express_upsc,"
+        "times_of_india_top,times_of_india_india").split(",") if v.strip()}
     count = 0
     for source in sources:
         if source.key not in requested:
@@ -62,6 +67,8 @@ def execute(connection, job) -> None:
         if not api_key:
             raise RuntimeError("PERPLEXITY_API_KEY is not set")
         stories, _ = request_digest(api_key, payload["date"], payload["model"])
+        if not stories:
+            raise UpstreamNotReady("Perplexity returned no valid stories for the requested date")
         store_stories(connection, stories)
     elif job["job_type"] == "consolidate_news":
         api_key = os.getenv("PERPLEXITY_API_KEY")
@@ -112,7 +119,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Durable ingestion and content worker")
     parser.add_argument("--database", default=database_target())
     parser.add_argument("--enqueue-daily", action="store_true")
-    parser.add_argument("--date", default=datetime.now(IST).date().isoformat())
+    parser.add_argument("--date", default=default_target_date(),
+                        help="Publication date; defaults to the completed previous IST day")
     parser.add_argument("--hydrate-missing-pib", "--enqueue-missing-pib", action="store_true",
                         help="Fetch PIB rows whose full_text is empty directly from the database")
     parser.add_argument("--drain", action="store_true")

@@ -94,7 +94,8 @@ For this local dashboard, register the complete RSS + PIB + Perplexity pipeline:
 powershell -ExecutionPolicy Bypass -File .\register_daily_task.ps1
 ```
 
-It runs every day at 04:00 IST and writes operational logs under `logs`. The
+It runs every day at 04:00 IST for the completed previous IST publication day
+and writes operational logs under `logs`. The
 computer must be on. The scheduled RSS job uses PIB and Times of India feeds. Indian
 Express and The Hindu discovery and summaries are handled through Perplexity
 citations. Full text is fetched only for official PIB releases.

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 
 from news_fetcher.db import backend
 from news_fetcher.raw_store import initialize_raw_store
+from news_fetcher.raw_store import IST
 
 
 def initialize(connection: sqlite3.Connection) -> None:
@@ -106,6 +108,17 @@ def initialize(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE articles ADD COLUMN last_content_attempt_at TEXT")
     if "content_last_error" not in columns:
         connection.execute("ALTER TABLE articles ADD COLUMN content_last_error TEXT")
+    # Versions before 2026-08-16 normalized RSS timestamps to UTC while the
+    # scheduler and API dates represent IST publication days. Convert those
+    # existing rows once; timestamps already carrying +05:30 are untouched.
+    utc_rss_rows = connection.execute("""SELECT id,published_at FROM articles
+      WHERE source_key!='pib' AND (published_at LIKE '%+00:00' OR published_at LIKE '%Z')""").fetchall()
+    for row in utc_rss_rows:
+        try:
+            converted = datetime.fromisoformat(row[1].replace("Z", "+00:00")).astimezone(IST).isoformat()
+        except (AttributeError, TypeError, ValueError):
+            continue
+        connection.execute("UPDATE articles SET published_at=? WHERE id=?", (converted, row[0]))
     audit_columns = ({row[0] for row in connection.execute(
         "SELECT column_name FROM information_schema.columns WHERE table_name='pib_ingestion_runs'")}
         if backend(connection) == "postgres" else

@@ -28,7 +28,7 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
       PERPLEXITY_MODEL: sonar
-      NEWS_ENABLED_SOURCES: pib,times_of_india_top,times_of_india_india
+      NEWS_ENABLED_SOURCES: pib,indian_express_india,indian_express_upsc,times_of_india_top,times_of_india_india
       NEWS_USER_AGENT: UPSCNewsFetcher/1.0
       NEWS_API_BASE_URL: https://news-fetcher-oav3.onrender.com
       CONSOLIDATION_MODEL: sonar

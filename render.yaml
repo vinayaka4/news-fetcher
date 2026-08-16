@@ -15,7 +15,7 @@ services:
       - key: PERPLEXITY_API_KEY
         sync: false
       - key: NEWS_ENABLED_SOURCES
-        value: pib,times_of_india_top,times_of_india_india
+        value: pib,indian_express_india,indian_express_upsc,times_of_india_top,times_of_india_india
       - key: NEWS_API_BASE_URL
         value: https://news-fetcher-oav3.onrender.com
       - key: CONSOLIDATION_MODEL
@@ -38,7 +38,7 @@ services:
       - key: PERPLEXITY_API_KEY
         sync: false
       - key: NEWS_ENABLED_SOURCES
-        value: pib,times_of_india_top,times_of_india_india
+        value: pib,indian_express_india,indian_express_upsc,times_of_india_top,times_of_india_india
       - key: NEWS_API_BASE_URL
         value: https://news-fetcher-oav3.onrender.com
       - key: CONSOLIDATION_MODEL

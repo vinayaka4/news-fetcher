@@ -15,6 +15,7 @@ import queue_worker
 from news_fetcher.cli import Source, fetch_pib_releases, fetch_source, initialize
 from news_fetcher.raw_store import build_envelope, initialize_raw_store, store_raw_event
 from news_fetcher.job_queue import claim_next, complete, enqueue, fail, initialize_jobs
+from news_fetcher.sources.rss import parse_date
 
 
 class Response:
@@ -38,6 +39,22 @@ RSS_XML = b"""<?xml version="1.0"?><rss version="2.0"><channel>
 </item></channel></rss>"""
 
 
+def test_rss_publication_day_is_normalized_to_ist():
+    assert parse_date({"published": "Sun, 16 Aug 2026 20:00:00 GMT"}).startswith(
+        "2026-08-17T01:30:00+05:30")
+
+
+def test_schema_upgrade_converts_existing_rss_utc_timestamps_to_ist():
+    connection = sqlite3.connect(":memory:"); initialize(connection)
+    connection.execute("""INSERT INTO articles
+      (id,publisher,source_key,title,normalized_title,article_url,published_at,fetched_at)
+      VALUES ('old','Paper','feed','Title','title','https://example.com/old',
+              '2026-08-16T20:00:00+00:00','now')""")
+    initialize(connection)
+    assert connection.execute("SELECT published_at FROM articles WHERE id='old'").fetchone()[0] \
+        == "2026-08-17T01:30:00+05:30"
+
+
 def test_rss_success_dumps_raw_and_normalized_rows(monkeypatch):
     monkeypatch.setattr("news_fetcher.sources.rss.requests.get", lambda *args, **kwargs: Response(RSS_XML))
     source = Source("test_rss", "Test Publisher", "https://example.com/feed")
@@ -48,6 +65,20 @@ def test_rss_success_dumps_raw_and_normalized_rows(monkeypatch):
     raw = connection.execute("SELECT raw_json FROM raw_events").fetchone()[0]
     assert json.loads(raw)["payload"]["title"] == "Policy reform announced"
     assert connection.execute("SELECT article_url FROM articles").fetchone()[0] == "https://example.com/policy"
+
+
+def test_same_story_from_different_publishers_is_preserved_for_later_consolidation(monkeypatch):
+    def response(url, **kwargs):
+        publisher = "express" if "express" in url else "toi"
+        return Response(RSS_XML.replace(b"https://example.com/policy?utm_source=test",
+                                        f"https://{publisher}.example/policy".encode()))
+    monkeypatch.setattr("news_fetcher.sources.rss.requests.get", response)
+    connection = sqlite3.connect(":memory:"); initialize(connection)
+    assert fetch_source(connection, Source("indian_express_india", "Indian Express",
+                                           "https://express/feed"), "agent") == 1
+    assert fetch_source(connection, Source("times_of_india_india", "Times of India",
+                                           "https://toi/feed"), "agent") == 1
+    assert connection.execute("SELECT COUNT(*) FROM articles").fetchone()[0] == 2
 
 
 def test_rss_network_failure_writes_no_partial_rows(monkeypatch):

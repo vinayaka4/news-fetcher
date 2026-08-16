@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 
@@ -25,6 +26,11 @@ def snapshot():
       "pdf": {"items": [{"id": "pdf1", "source_name": "Paper",
         "structured_url": "/api/v1/uploads/pdf/pdf1", "newspaper": {"sections": [{"articles": [{
           "id": "a1", "title": "Sports result", "content": ["The home team won."]}]}]}}]}}}
+
+
+def test_daily_target_defaults_to_completed_previous_ist_day():
+    assert queue_worker.default_target_date(datetime(2026, 8, 16, 23, 0, tzinfo=timezone.utc)) \
+        == "2026-08-16"
 
 
 def merge_everything(candidates):
@@ -109,6 +115,15 @@ def test_worker_retries_consolidation_until_required_sources_are_ready(monkeypat
     job = {"job_type": "consolidate_news", "payload_json": (
       '{"date":"2026-08-15","model":"sonar","api_base_url":"https://api.example"}')}
     with pytest.raises(queue_worker.UpstreamNotReady, match="pib"):
+        queue_worker.execute(sqlite3.connect(":memory:"), job)
+
+
+def test_empty_perplexity_result_is_deferred_instead_of_marked_complete(monkeypatch):
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "test-key")
+    monkeypatch.setattr(queue_worker, "request_digest", lambda *args: ([], {}))
+    job = {"job_type": "fetch_perplexity", "payload_json":
+           '{"date":"2026-08-17","model":"sonar"}'}
+    with pytest.raises(queue_worker.UpstreamNotReady, match="no valid stories"):
         queue_worker.execute(sqlite3.connect(":memory:"), job)
 
 
