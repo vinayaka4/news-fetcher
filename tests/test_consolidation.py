@@ -154,8 +154,23 @@ def test_worker_defers_render_timeout(monkeypatch):
                         lambda *args: (_ for _ in ()).throw(requests.Timeout("sleeping")))
     job = {"job_type": "consolidate_news", "payload_json": (
       '{"date":"2026-08-15","model":"sonar","api_base_url":"https://api.example"}')}
-    with pytest.raises(queue_worker.UpstreamNotReady, match="timed out"):
+    with pytest.raises(queue_worker.UpstreamNotReady, match="temporarily unavailable"):
         queue_worker.execute(sqlite3.connect(":memory:"), job)
+
+
+def test_worker_uses_database_snapshot_when_render_returns_502(monkeypatch):
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "test-key")
+    monkeypatch.setattr(queue_worker, "fetch_daily_snapshot",
+                        lambda *args: (_ for _ in ()).throw(requests.HTTPError("502")))
+    fallback = {"source_statuses": {"pib": "ready", "rss": "ready", "perplexity": "ready"}}
+    monkeypatch.setattr(queue_worker, "build_all_sources_snapshot", lambda *args, **kwargs: fallback)
+    stored = []
+    monkeypatch.setattr(queue_worker, "store_consolidation",
+                        lambda *args, **kwargs: stored.append(args[2]))
+    job = {"job_type": "consolidate_news", "payload_json": (
+      '{"date":"2026-08-16","model":"sonar","api_base_url":"https://api.example"}')}
+    queue_worker.execute(sqlite3.connect(":memory:"), job)
+    assert stored == [fallback]
 
 
 def test_empty_perplexity_result_is_deferred_instead_of_marked_complete(monkeypatch):

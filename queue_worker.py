@@ -19,6 +19,7 @@ from news_fetcher.sources.perplexity import load_local_env, request_digest, stor
 from news_fetcher.sources.rss import SourceAccessDeferred
 from news_fetcher.consolidation import (ConsolidationError, fetch_daily_snapshot,
                                         request_ai_groups, store_consolidation)
+from news_fetcher.api import build_all_sources_snapshot
 
 ROOT = Path(__file__).resolve().parent
 
@@ -90,8 +91,15 @@ def execute(connection, job) -> None:
             raise RuntimeError("PERPLEXITY_API_KEY is not set")
         try:
             snapshot = fetch_daily_snapshot(payload["api_base_url"], payload["date"])
-        except requests.Timeout as error:
-            raise UpstreamNotReady("Daily source API timed out while Render was unavailable") from error
+        except requests.RequestException as api_error:
+            try:
+                snapshot = build_all_sources_snapshot(connection, payload["date"], limit=200,
+                                                      include_pdf_content=True, compact=True)
+                print(f"source API unavailable; using database snapshot: {type(api_error).__name__}",
+                      flush=True)
+            except Exception as database_error:
+                raise UpstreamNotReady(
+                    "Daily source API and database snapshot are temporarily unavailable") from database_error
         required = {item.strip() for item in os.getenv(
             "CONSOLIDATION_REQUIRED_SOURCES", "pib,rss,perplexity").split(",") if item.strip()}
         unavailable = sorted(source for source in required

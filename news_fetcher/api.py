@@ -166,6 +166,28 @@ def _compact_all_sources(sources: dict) -> None:
                 article.pop("source_blocks", None)
 
 
+def build_all_sources_snapshot(connection, event_date: str, limit: int = 200,
+                               include_pdf_content: bool = True,
+                               compact: bool = True) -> dict:
+    """Build the canonical four-source snapshot for HTTP and worker consumers."""
+    sources = {
+        "pib": _query_pib(connection, event_date, limit),
+        "rss": _query_rss(connection, event_date, limit),
+        "perplexity": _query_perplexity(connection, event_date, limit),
+        "pdf": _query_pdfs(connection, event_date, min(limit, 25), include_pdf_content),
+    }
+    if compact:
+        _compact_all_sources(sources)
+    statuses = {name: value["status"] for name, value in sources.items()}
+    total = sum(value["count"] for value in sources.values())
+    overall = ("ready" if all(status == "ready" for status in statuses.values())
+               else "partial" if total else "no_data")
+    return {"date": event_date, "status": overall, "complete": overall == "ready",
+            "total_count": total,
+            "source_counts": {name: value["count"] for name, value in sources.items()},
+            "source_statuses": statuses, "sources": sources}
+
+
 @api.get("/articles")
 def get_articles():
     """Return normalized, consumer-ready articles including hydrated content."""
@@ -299,22 +321,9 @@ def get_all_sources():
         "1", "true", "yes"}
     compact = request.args.get("compact", "false").strip().lower() in {"1", "true", "yes"}
     with connect() as connection:
-        sources = {
-            "pib": _query_pib(connection, event_date, limit),
-            "rss": _query_rss(connection, event_date, limit),
-            "perplexity": _query_perplexity(connection, event_date, limit),
-            "pdf": _query_pdfs(connection, event_date, min(limit, 25), include_pdf_content),
-        }
-    if compact:
-        _compact_all_sources(sources)
-    statuses = {name: value["status"] for name, value in sources.items()}
-    total = sum(value["count"] for value in sources.values())
-    overall = ("ready" if all(status == "ready" for status in statuses.values())
-               else "partial" if total else "no_data")
-    return jsonify({"date": event_date, "status": overall,
-                    "complete": overall == "ready", "total_count": total,
-                    "source_counts": {name: value["count"] for name, value in sources.items()},
-                    "source_statuses": statuses, "sources": sources})
+        snapshot = build_all_sources_snapshot(connection, event_date, limit,
+                                              include_pdf_content, compact)
+    return jsonify(snapshot)
 
 
 @api.get("/consolidated")
